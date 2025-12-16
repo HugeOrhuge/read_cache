@@ -3499,7 +3499,7 @@ static inline bool sanity_check_area_boundary(struct f2fs_sb_info *sbi,
 #if META_FOR_ZNS
 	u32 sit_log_blkaddr = le32_to_cpu(raw_super->sit_log_blkaddr);
 	u32 nat_log_blkaddr = le32_to_cpu(raw_super->nat_log_blkaddr);
-	u32 sum_log_blkaddr = le32_to_cpu(raw_super->sum_log_blkaddr);
+	u32 ssa_log_blkaddr = le32_to_cpu(raw_super->ssa_log_blkaddr);
 	u32 segment_count_sit_log = le32_to_cpu(raw_super->segment_count_sit_log);
 	u32 segment_count_nat_log = le32_to_cpu(raw_super->segment_count_nat_log);
 	u32 segment_count_ssa_log = le32_to_cpu(raw_super->segment_count_ssa_log);
@@ -3536,23 +3536,23 @@ static inline bool sanity_check_area_boundary(struct f2fs_sb_info *sbi,
 	}
 
 	if (nat_log_blkaddr + (segment_count_nat_log << log_blocks_per_seg) !=
-							sum_log_blkaddr) {
+							ssa_log_blkaddr) {
 		f2fs_info(sbi, "Wrong NAT log area boundary, start(%u) end(%u) blocks(%u)",
-			  nat_log_blkaddr, sum_log_blkaddr,
+			  nat_log_blkaddr, ssa_log_blkaddr,
 			  segment_count_nat_log << log_blocks_per_seg);
 		bound_err = 1;
 	}
 	
 #if GRID_STRIPE
-	if ((sum_log_blkaddr + (segment_count_ssa_log << log_blocks_per_seg)) >
+	if ((ssa_log_blkaddr + (segment_count_ssa_log << log_blocks_per_seg)) >
 							main_blkaddr) {
     printk("GRID_STRIPE");
 #else
-	if ((sum_log_blkaddr + (segment_count_ssa_log << log_blocks_per_seg)) !=
+	if ((ssa_log_blkaddr + (segment_count_ssa_log << log_blocks_per_seg)) !=
 							main_blkaddr) {
 #endif
 		f2fs_info(sbi, "Wrong SSA log area boundary, start(%u) end(%u) blocks(%u)",
-			  sum_log_blkaddr, main_blkaddr,
+			  ssa_log_blkaddr, main_blkaddr,
 			  segment_count_ssa_log << log_blocks_per_seg);
 		bound_err=1;
 	}
@@ -4266,6 +4266,7 @@ static int f2fs_scan_devices(struct f2fs_sb_info *sbi)
 
 		} else { 
 			/* Multi-device mount */
+			//【TODO251125】多设备挂载
 			memcpy(FDEV(i).path, RDEV(i).path, MAX_PATH_LEN);
 			FDEV(i).total_segments =
 				le32_to_cpu(RDEV(i).total_segments);
@@ -4282,6 +4283,7 @@ static int f2fs_scan_devices(struct f2fs_sb_info *sbi)
 					(FDEV(i).total_segments <<
 					sbi->log_blocks_per_seg) - 1;
 			}
+			pr_info("[f2fs_scan_devices]: Multi-device mount. device%d: %s, total_segments:%u, start_blk=%u, end_blk=%u ---ttt\n", i, FDEV(i).path, FDEV(i).total_segments, FDEV(i).start_blk, FDEV(i).end_blk);
 			FDEV(i).bdev = blkdev_get_by_path(FDEV(i).path,
 					sbi->sb->s_mode, sbi->sb->s_type);
 		}

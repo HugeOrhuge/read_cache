@@ -3815,9 +3815,11 @@ static int f2fs_sec_trim_file(struct file *filp, unsigned long arg)
 				goto out;
 			}
 
+			int di = 0;
 			cur_bdev = f2fs_target_device(sbi, blkaddr, NULL);
 			if (f2fs_is_multi_device(sbi)) {
-				int di = f2fs_target_device_index(sbi, blkaddr);
+				// int di = f2fs_target_device_index(sbi, blkaddr);
+				di = f2fs_target_device_index(sbi, blkaddr);
 
 				blkaddr -= FDEV(di).start_blk;
 			}
@@ -3828,6 +3830,10 @@ static int f2fs_sec_trim_file(struct file *filp, unsigned long arg)
 						blkaddr == prev_block + len) {
 					len++;
 				} else {
+					if (prev_bdev == cur_bdev)
+						printk("(%s:%d) prev_bdev = cur_bdev, blkaddr: %u, FDEV(di).start_blk: %u, len: %u [by tt]", __func__, __LINE__, blkaddr, FDEV(di).start_blk, len);
+					else
+						printk("(%s:%d) prev_bdev != cur_bdev, blkaddr: %u, FDEV(di).start_blk: %u, len: %u [by tt]", __func__, __LINE__, blkaddr, FDEV(di).start_blk, len);
 					ret = f2fs_secure_erase(prev_bdev,
 						inode, prev_index, prev_block,
 						len, range.flags);

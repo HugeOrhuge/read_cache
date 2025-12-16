@@ -441,6 +441,7 @@ int f2fs_get_first_zns_index(struct f2fs_sb_info *sbi) {
   
 }
 
+// blkaddr在设备的起始和末尾地址之间，返回设备索引
 int f2fs_target_device_index(struct f2fs_sb_info *sbi, block_t blkaddr)
 {
 	int i;
@@ -2762,9 +2763,12 @@ got_it:
 		}
 		fio->need_lock = LOCK_REQ;
 	}
+	// 【TODO251120】定位
 	err = f2fs_get_node_info(fio->sbi, dn.nid, &ni, false);
-	if (err)
+	if (err) {
+ 		printk("(%s:%d) f2fs_get_node_info failed nid=%u, err=%d\n", __func__, __LINE__, dn.nid, err);
 		goto out_writepage;
+	}
 
 	fio->version = ni.version;
 

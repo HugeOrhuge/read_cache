@@ -1825,7 +1825,7 @@ static int do_garbage_collect(struct f2fs_sb_info *sbi,
 	 * resulting in less than expected usable segments in the zone,
 	 * calculate the end segno in the zone which can be garbage collected
 	 */
-	// zone capcacity < zone size，因此重新计算 end_segno
+	// zone capcacity < zone size，因此重新计�? end_segno
 	if (f2fs_sb_has_blkzoned(sbi))
 		end_segno -= sbi->segs_per_sec -
 					f2fs_usable_segs_in_sec(sbi, segno);
@@ -2265,6 +2265,10 @@ static void update_sb_metadata(struct f2fs_sb_info *sbi, int secs)
 	segment_count_main = le32_to_cpu(raw_sb->segment_count_main);
 	block_count = le64_to_cpu(raw_sb->block_count);
 
+	f2fs_info(sbi, "ResizeFS: section_count: %u -> %u, segment_count: %u -> %u, block_count: %llu -> %llu [by tt]",
+		  section_count, section_count + secs,
+		  segment_count, segment_count + segs,
+		  block_count, block_count + (long long)segs * sbi->blocks_per_seg);
 	raw_sb->section_count = cpu_to_le32(section_count + secs);
 	raw_sb->segment_count = cpu_to_le32(segment_count + segs);
 	raw_sb->segment_count_main = cpu_to_le32(segment_count_main + segs);
@@ -2415,6 +2419,9 @@ out_unlock:
 		update_fs_metadata(sbi, secs);
 		update_sb_metadata(sbi, secs);
 		f2fs_commit_super(sbi, false);
+	} else {
+		f2fs_info(sbi, "Resized f2fs from %llu to %llu blocks, -secs: %u [by tt]",
+			  old_block_count, block_count, secs);
 	}
 recover_out:
 	if (err) {

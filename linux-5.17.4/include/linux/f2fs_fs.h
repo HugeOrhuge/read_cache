@@ -108,7 +108,7 @@ struct f2fs_super_block {
 #if META_FOR_ZNS
 	__le32 sit_log_blkaddr;	/* start block address of SIT log area  */
 	__le32 nat_log_blkaddr;	/* start block address of NAT log area  */
-	__le32 sum_log_blkaddr; /* start block address of SSA log area  */
+	__le32 ssa_log_blkaddr; /* start block address of SSA log area  */
 #endif
 	__le32 main_blkaddr;		/* start block address of main area */
 	__le32 root_ino;		/* root inode number */

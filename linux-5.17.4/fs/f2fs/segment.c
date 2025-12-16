@@ -5097,7 +5097,7 @@ continue_unlock:
 /*
         if (0) {
           blkdev_zone_mgmt(FDEV(0).bdev, REQ_OP_ZONE_FINISH, 
-              SECTOR_FROM_BLOCK(sm_i->sum_log_blkaddr + sm_i->cur_sum_log * sbi->blocks_per_blkz), 
+              SECTOR_FROM_BLOCK(sm_i->ssa_log_blkaddr + sm_i->cur_sum_log * sbi->blocks_per_blkz), 
               SECTOR_FROM_BLOCK(sbi->blocks_per_blkz), GFP_NOFS);
         }
 */
@@ -6867,17 +6867,17 @@ int f2fs_check_write_pointer(struct f2fs_sb_info *sbi)
 {
 	int i, ret;
 	struct check_zone_write_pointer_args args;
-	pr_info("[f2fs_check_write_pointer]: ttt111\n");
+	// pr_info("[f2fs_check_write_pointer]: ttt111\n");
 
-	pr_info("[f2fs_check_write_pointer]: sbi->s_ndevs: %d, ttt222\n", sbi->s_ndevs);
+	// pr_info("[f2fs_check_write_pointer]: sbi->s_ndevs: %d, ttt222\n", sbi->s_ndevs);
 
 	for (i = 0; i < sbi->s_ndevs; i++) {
 		if (!bdev_is_zoned(FDEV(i).bdev)) 
 			continue;
-		pr_info("[f2fs_check_write_pointer]: ttt333\n");
+		// pr_info("[f2fs_check_write_pointer]: ttt333\n");
 		
 		args.sbi = sbi;
-		pr_info("[f2fs_check_write_pointer]: ttt444\n");
+		// pr_info("[f2fs_check_write_pointer]: ttt444\n");
 
 		args.fdev = &FDEV(i);
 		pr_info("[f2fs_check_write_pointer]: FDEV(i).nr_blkz: %u, FDEV(i).total_segments: %u, ttt555\n", FDEV(i).nr_blkz, FDEV(i).total_segments);
@@ -7229,7 +7229,7 @@ int f2fs_build_segment_manager(struct f2fs_sb_info *sbi)
 	sm_info->ssa_blkaddr = le32_to_cpu(raw_super->ssa_blkaddr);
 #if META_FOR_ZNS
 	sm_info->sit_log_blkaddr = le32_to_cpu(raw_super->sit_log_blkaddr);
-	sm_info->sum_log_blkaddr = le32_to_cpu(raw_super->sum_log_blkaddr);
+	sm_info->ssa_log_blkaddr = le32_to_cpu(raw_super->ssa_log_blkaddr);
 	sm_info->logged_sum_blks = 0;
 	sm_info->sum_log_tree_entries = 0;
 
@@ -7282,7 +7282,8 @@ sm_info->grid_cnt = 1;
 #endif //STRIPE
 #if SEP_SSA
   sm_info->usable_segs_in_sec = f2fs_usable_zone_segs_in_sec(sbi, 0);
-  sm_info->main_segments = MAIN_SECS(sbi) * (sbi->segs_per_sec);
+  sm_info->main_segments = MAIN_SECS(sbi) * (sbi->segs_per_sec); // main_segments按照每个section的segment数为1022来计算
+  //【TODO251122】这里修改了segment_count，导致TOTAL_SEGS(sbi)计算有误
   sm_info->segment_count = 
     (sm_info->main_blkaddr - sm_info->seg0_blkaddr)
     / sbi->blocks_per_seg /* seg before main */

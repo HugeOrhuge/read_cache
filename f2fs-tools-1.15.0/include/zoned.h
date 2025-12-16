@@ -2,7 +2,7 @@
 #define __ZONED_H__
 #define META_FOR_ZNS 1 // 1
 #if META_FOR_ZNS
-  #define META_STRIPE_CNT 0 //1
+  #define META_STRIPE_CNT 1 //1
 #endif
 #define GRID_STRIPE 0
 // #if GRID_STRIPE
