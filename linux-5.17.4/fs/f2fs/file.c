@@ -2971,6 +2971,141 @@ static int f2fs_ioc_get_features(struct file *filp, unsigned long arg)
 	return put_user(sb_feature, (u32 __user *)arg);
 }
 
+#ifdef CONFIG_BLK_DEV_ZONED
+struct f2fs_zone_count_args {
+	unsigned int empty_zones;
+	unsigned int total_zones;
+	unsigned int min_capacity_blocks;
+};
+
+static int f2fs_count_empty_zones_cb(struct blk_zone *zone, unsigned int idx,
+					void *data)
+{
+	struct f2fs_zone_count_args *args = data;
+
+	if (zone->type == BLK_ZONE_TYPE_CONVENTIONAL)
+		return 0;
+
+	args->total_zones++;
+	if (zone->cond == BLK_ZONE_COND_EMPTY)
+		args->empty_zones++;
+
+	if (!args->min_capacity_blocks ||
+	    (zone->capacity >> F2FS_LOG_SECTORS_PER_BLOCK) <
+	    args->min_capacity_blocks)
+		args->min_capacity_blocks =
+			zone->capacity >> F2FS_LOG_SECTORS_PER_BLOCK;
+
+	return 0;
+}
+
+static int f2fs_count_empty_zones(struct f2fs_sb_info *sbi,
+				 unsigned int *empty_zones,
+				 unsigned int *total_zones,
+				 unsigned int *min_capacity_blocks)
+{
+	int devs = sbi->s_ndevs ? sbi->s_ndevs : 1;
+	int i;
+	int ret;
+
+	*empty_zones = 0;
+	*total_zones = 0;
+	*min_capacity_blocks = 0;
+
+	for (i = 0; i < devs; i++) {
+		struct f2fs_zone_count_args args = { 0 };
+
+		ret = blkdev_report_zones(FDEV(i).bdev, 0, BLK_ALL_ZONES,
+					  f2fs_count_empty_zones_cb, &args);
+		if (ret < 0)
+			return ret;
+
+		*empty_zones += args.empty_zones;
+		*total_zones += args.total_zones;
+		if (args.min_capacity_blocks &&
+		    (!*min_capacity_blocks ||
+		     args.min_capacity_blocks < *min_capacity_blocks))
+			*min_capacity_blocks = args.min_capacity_blocks;
+	}
+
+	return 0;
+}
+#endif
+
+static int f2fs_ioc_get_free_zones(struct file *filp, unsigned long arg)
+{
+	struct f2fs_sb_info *sbi = F2FS_I_SB(file_inode(filp));
+	struct f2fs_free_zone_info info = { 0 };
+	struct free_segmap_info *free_i = FREE_I(sbi);
+	unsigned int empty_zones = 0;
+	unsigned int total_zones = 0;
+	unsigned int zone_capacity_blocks = 0;
+	unsigned int free_secs;
+	unsigned int free_zones_sit;
+	unsigned int reserved_secs;
+	unsigned int reserved_zones;
+	unsigned int free_zones;
+	unsigned int prefree_segs;
+	unsigned int prefree_zones;
+	u64 free_blocks;
+	u64 reserved_blocks;
+	u64 prefree_blocks;
+	int ret;
+
+	if (!f2fs_sb_has_blkzoned(sbi))
+		return -EOPNOTSUPP;
+
+#ifdef CONFIG_BLK_DEV_ZONED
+	ret = f2fs_count_empty_zones(sbi, &empty_zones, &total_zones,
+					&zone_capacity_blocks);
+	if (ret < 0)
+		return ret;
+#else
+	return -EOPNOTSUPP;
+#endif
+	if (!zone_capacity_blocks)
+		zone_capacity_blocks = sbi->blocks_per_blkz;
+	if (!zone_capacity_blocks)
+		return -EINVAL;
+
+	spin_lock(&free_i->segmap_lock);
+	free_secs = free_i->free_sections;
+	spin_unlock(&free_i->segmap_lock);
+
+	reserved_secs = reserved_sections(sbi);
+	prefree_segs = prefree_segments(sbi);
+	free_blocks = (u64)free_secs * sbi->segs_per_sec * sbi->blocks_per_seg;
+	reserved_blocks = (u64)reserved_secs * sbi->segs_per_sec * sbi->blocks_per_seg;
+	prefree_blocks = (u64)prefree_segs * sbi->blocks_per_seg;
+	free_zones_sit = free_blocks / zone_capacity_blocks;
+	reserved_zones = DIV_ROUND_UP(reserved_blocks, zone_capacity_blocks);
+	prefree_zones = prefree_blocks / zone_capacity_blocks;
+	free_zones = min(free_zones_sit, empty_zones);
+	if (free_zones > reserved_zones)
+		free_zones -= reserved_zones;
+	else
+		free_zones = 0;
+
+	info.blocks_per_seg = sbi->blocks_per_seg;
+	info.segs_per_sec = sbi->segs_per_sec;
+	info.secs_per_zone = sbi->secs_per_zone;
+	info.blocks_per_blkz = sbi->blocks_per_blkz;
+	info.zone_capacity_blocks = zone_capacity_blocks;
+	info.reserved_zones = reserved_zones;
+	info.empty_zones = empty_zones;
+	info.free_zones_sit = free_zones_sit;
+	info.prefree_zones = prefree_zones;
+	info.free_zones = free_zones;
+	info.total_zones = total_zones;
+	info.free_sections = free_secs;
+
+	if (copy_to_user((struct f2fs_free_zone_info __user *)arg, &info,
+			 sizeof(info)))
+		return -EFAULT;
+
+	return 0;
+}
+
 #ifdef CONFIG_QUOTA
 int f2fs_transfer_project_quota(struct inode *inode, kprojid_t kprojid)
 {
@@ -4212,6 +4347,8 @@ static long __f2fs_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		return f2fs_ioc_decompress_file(filp, arg);
 	case F2FS_IOC_COMPRESS_FILE:
 		return f2fs_ioc_compress_file(filp, arg);
+	case F2FS_IOC_GET_FREE_ZONES:
+		return f2fs_ioc_get_free_zones(filp, arg);
 	default:
 		return -ENOTTY;
 	}
@@ -4805,6 +4942,7 @@ long f2fs_compat_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	case F2FS_IOC_SET_COMPRESS_OPTION:
 	case F2FS_IOC_DECOMPRESS_FILE:
 	case F2FS_IOC_COMPRESS_FILE:
+	case F2FS_IOC_GET_FREE_ZONES:
 		break;
 	default:
 		return -ENOIOCTLCMD;

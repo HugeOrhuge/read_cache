@@ -42,6 +42,8 @@
 						struct f2fs_comp_option)
 #define F2FS_IOC_DECOMPRESS_FILE	_IO(F2FS_IOCTL_MAGIC, 23)
 #define F2FS_IOC_COMPRESS_FILE		_IO(F2FS_IOCTL_MAGIC, 24)
+#define F2FS_IOC_GET_FREE_ZONES		_IOR(F2FS_IOCTL_MAGIC, 25,	\
+					struct f2fs_free_zone_info)
 
 /*
  * should be same as XFS_IOC_GOINGDOWN.
@@ -93,6 +95,21 @@ struct f2fs_sectrim_range {
 struct f2fs_comp_option {
 	__u8 algorithm;
 	__u8 log_cluster_size;
+};
+
+struct f2fs_free_zone_info {
+	__u32 blocks_per_seg;
+	__u32 segs_per_sec;
+	__u32 secs_per_zone;
+	__u32 blocks_per_blkz;
+	__u32 zone_capacity_blocks;
+	__u32 reserved_zones;
+	__u32 empty_zones;
+	__u32 free_zones_sit;
+	__u32 prefree_zones;
+	__u32 free_zones;
+	__u32 total_zones;
+	__u64 free_sections;
 };
 
 #endif /* _UAPI_LINUX_F2FS_H */
