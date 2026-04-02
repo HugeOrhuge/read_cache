@@ -11,7 +11,7 @@
 #define READ_ID_MAX		256
 #define BLOOM_FILTER_BYTES	(3 * 1024 * 1024)
 #define BLOOM_FILTER_HASHES	10
-#define READ_ID_DIR_NAME	"read_id"
+#define READ_ID_DIR_FMT		"read_%03u"
 
 /* 待写入 read_id 目录的内存文件描述。 */
 struct packed_file {

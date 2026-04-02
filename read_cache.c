@@ -38,7 +38,7 @@ int read_cache_check_space(const struct packed_zone *pz)
 }
 
 /* 递归创建目录，行为类似 mkdir -p。 */
-static int mkdir_p(const char *path, mode_t mode)
+static int read_cache_mkdir_p(const char *path, mode_t mode)
 {
 	char tmp[PATH_MAX];
 	char *p;
@@ -68,7 +68,7 @@ static int mkdir_p(const char *path, mode_t mode)
 }
 
 /* 确保文件路径的父目录链存在。 */
-static int ensure_parent_dirs(const char *path, mode_t mode)
+static int read_cache_ensure_parent_dirs(const char *path, mode_t mode)
 {
 	char tmp[PATH_MAX];
 	char *slash;
@@ -85,11 +85,11 @@ static int ensure_parent_dirs(const char *path, mode_t mode)
 
 	*slash = '\0';
 	/* 确保父目录树存在。 */
-	return mkdir_p(tmp, mode);
+	return read_cache_mkdir_p(tmp, mode);
 }
 
 /* 递归删除所有文件和子目录。 */
-static int unlink_dir_recursive(const char *dir_path)
+static int read_cache_unlink_dir_recursive(const char *dir_path)
 {
 	DIR *dir;
 	struct dirent *ent;
@@ -121,7 +121,7 @@ static int unlink_dir_recursive(const char *dir_path)
 
 		if (S_ISDIR(st.st_mode))
 			/* 递归进入子目录。 */
-			ret = unlink_dir_recursive(path);
+			ret = read_cache_unlink_dir_recursive(path);
 		else
 			/* 删除普通文件或符号链接。 */
 			ret = unlink(path) ? -errno : 0;
@@ -151,11 +151,11 @@ int read_cache_unlink_read_id_dir(const char *read_id_dir)
 		return -ENOTDIR;
 
 	/* 递归删除目录内容。 */
-	return unlink_dir_recursive(read_id_dir);
+	return read_cache_unlink_dir_recursive(read_id_dir);
 }
 
 /* 将内存缓冲区写入文件路径。 */
-static int write_file(const char *path, const void *data, size_t size)
+static int read_cache_write_file(const char *path, const void *data, size_t size)
 {
 	int fd;
 	ssize_t written;
@@ -163,7 +163,7 @@ static int write_file(const char *path, const void *data, size_t size)
 	int ret;
 
 	/* 创建文件对应的目录链。 */
-	ret = ensure_parent_dirs(path, 0755);
+	ret = read_cache_ensure_parent_dirs(path, 0755);
 	if (ret)
 		return ret;
 
@@ -195,20 +195,43 @@ out:
 int packed_zone_flush(struct packed_zone *pz)
 {
 	struct packed_file *file;
+	char evict_dir[PATH_MAX];
 	char read_id_dir[PATH_MAX];
 	char file_path[PATH_MAX];
+	uint32_t evict_id;
 	uint32_t read_id;
 	int ret;
 
 	if (!pz)
 		return -EINVAL;
 
-	/* 写入前检查空间。 */
-	ret = read_cache_check_space(pz);
-	if (ret <= 0)
-		return -ENOSPC;
+	/* 写入前检查空间，不足则驱逐热度最小的 read_id。 */
+	while (read_cache_check_space(pz) <= 0) {
+		/* 取出热度最小的 read_id。 */
+		ret = hotness_get_min_read_id(&evict_id);
+		if (ret == -ENOENT)
+			return -ENOSPC;
+		if (ret < 0)
+			return ret;
 
-	/* 分配 read_id 并生成目录名。 */
+		/* 生成被驱逐 read_id 的目录名。 */
+		ret = hotness_get_read_id_dir(evict_id, evict_dir,
+					     sizeof(evict_dir));
+		if (ret)
+			return ret;
+
+		/* 删除该 read_id 目录。 */
+		ret = read_cache_unlink_read_id_dir(evict_dir);
+		if (ret && ret != -ENOENT)
+			return ret;
+
+		/* 重置被驱逐 read_id 的布隆过滤器位图。 */
+		bloom_filter_reset_read_id(evict_id);
+		/* 标记该 read_id 为未使用。 */
+		hotness_release_read_id(evict_id);
+	}
+
+	/* 空间足够后，分配新的 read_id 并生成目录名。 */
 	ret = hotness_alloc_read_id(&read_id, read_id_dir,
 				    sizeof(read_id_dir));
 	if (ret)
@@ -217,7 +240,7 @@ int packed_zone_flush(struct packed_zone *pz)
 	/* 清理该 read_id 旧数据。 */
 	read_cache_unlink_read_id_dir(read_id_dir);
 	/* 创建 read_id 顶层目录。 */
-	ret = mkdir_p(read_id_dir, 0755);
+	ret = read_cache_mkdir_p(read_id_dir, 0755);
 	if (ret)
 		return ret;
 
@@ -228,20 +251,34 @@ int packed_zone_flush(struct packed_zone *pz)
 		/* 生成 read_id 目录下的完整路径。 */
 		if (snprintf(file_path, sizeof(file_path), "%s/%s",
 			     read_id_dir, file->path) >= (int)sizeof(file_path))
-			return -ENAMETOOLONG;
+			{
+				ret = -ENAMETOOLONG;
+				goto out_release;
+			}
 
-		/* 写入文件内容到存储。 */
-		ret = write_file(file_path, file->data, file->size);
+		/* 写入文件内容到f2fs */
+		ret = read_cache_write_file(file_path, file->data, file->size);
 		if (ret)
-			return ret;
+			goto out_release;
 
-		/* 将路径写入该 read_id 的布隆过滤器。 */
+		/* 将路径写入该 read_id 的布隆过滤器 */
 		bloom_filter_set(read_id, file->path);
-		/* 统计该路径对应 read_id 的热度。 */
-		hotness_update_from_path(file_path);
+		/* 统计该 read_id 的热度 */
+		hotness_inc_read_id(read_id);
 	}
 
+	/* 记录该 read_id 为最新写入。 */
+	ret = hotness_mark_written(read_id);
+	if (ret)
+		goto out_release;
+
 	return 0;
+
+out_release:
+	read_cache_unlink_read_id_dir(read_id_dir);
+	bloom_filter_reset_read_id(read_id);
+	hotness_release_read_id(read_id);
+	return ret;
 }
 
 /* 尝试在指定 read_id 目录下打开并验证文件。 */
@@ -252,7 +289,7 @@ static int read_cache_try_read(uint32_t read_id, const char *file_path)
 	char buf;
 
 	if (snprintf(full_path, sizeof(full_path),
-		     READ_ID_DIR_NAME "/%u/%s", read_id, file_path)
+		     READ_ID_DIR_FMT "/%s", read_id, file_path)
 	    >= (int)sizeof(full_path))
 		return -ENAMETOOLONG;
 

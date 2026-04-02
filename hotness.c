@@ -15,10 +15,11 @@ struct hotness_entry {
 	int		used;
 };
 
-/* 内存热度表及分配游标。 */
+/* 内存热度表与写入指针。 */
 static struct hotness_entry *hotness_tbl;
 static unsigned int hotness_max_ids;
-static uint32_t hotness_next_id;
+static uint32_t hotness_tail_id;
+static unsigned int hotness_used;
 
 /* 初始化热度表状态。 */
 int hotness_init(unsigned int max_read_ids)
@@ -31,9 +32,11 @@ int hotness_init(unsigned int max_read_ids)
 	if (!hotness_tbl)
 		return -ENOMEM;
 
-	/* 初始化全局上限与分配游标。 */
+	/* 初始化全局上限与分配指针。 */
 	hotness_max_ids = max_read_ids;
-	hotness_next_id = 0;
+	/* 令首次分配得到 0 号 read_id。 */
+	hotness_tail_id = max_read_ids - 1;
+	hotness_used = 0;
 
 	return 0;
 }
@@ -42,41 +45,14 @@ int hotness_init(unsigned int max_read_ids)
 int hotness_is_used(uint32_t read_id)
 {
 	if (!hotness_tbl || read_id >= hotness_max_ids)
-		return 0;
+		return -EINVAL;
 
 	/* 返回该 read_id 的使用标记。 */
 	return hotness_tbl[read_id].used;
 }
 
-/* 从 read_id/<id>/ 路径解析 read_id。 */
-static int hotness_parse_read_id(const char *path, uint32_t *read_id)
-{
-	const char *prefix = READ_ID_DIR_NAME "/";
-	const char *p;
-	char *endp;
-	unsigned long id;
-
-	if (!path || !read_id)
-		return -EINVAL;
-
-	/* 确保路径以 read_id/ 前缀开头。 */
-	if (strncmp(path, prefix, strlen(prefix)))
-		return -EINVAL;
-
-	/* 解析数字 read_id 并校验分隔符。 */
-	p = path + strlen(prefix);
-	id = strtoul(p, &endp, 10);
-	if (endp == p || *endp != '/')
-		return -EINVAL;
-	if (id > UINT32_MAX)
-		return -EINVAL;
-
-	*read_id = (uint32_t)id;
-	return 0;
-}
-
 /* 重置指定 read_id 的热度。 */
-int hotness_reset_read_id(uint32_t read_id)
+int hotness_set_read_id_stats(uint32_t read_id)
 {
 	if (!hotness_tbl || read_id >= hotness_max_ids)
 		return -EINVAL;
@@ -84,6 +60,8 @@ int hotness_reset_read_id(uint32_t read_id)
 	/* 重置热度并标记为已使用。 */
 	hotness_tbl[read_id].id = read_id;
 	hotness_tbl[read_id].hotness = 0;
+	if (!hotness_tbl[read_id].used)
+		hotness_used++;
 	hotness_tbl[read_id].used = 1;
 
 	return 0;
@@ -103,19 +81,46 @@ int hotness_inc_read_id(uint32_t read_id)
 	return 0;
 }
 
-/* 从路径提取 read_id 并更新热度。 */
-int hotness_update_from_path(const char *path)
+/* 直接根据 read_id 更新热度。 */
+int hotness_update_from_path(uint32_t read_id)
 {
-	uint32_t read_id;
-	int ret;
-
-	/* 从文件路径解析 read_id。 */
-	ret = hotness_parse_read_id(path, &read_id);
-	if (ret)
-		return ret;
-
-	/* 增加解析得到的 read_id 热度。 */
+	/* 增加指定 read_id 的热度。 */
 	return hotness_inc_read_id(read_id);
+}
+
+/* 将 read_id 追加为最新写入记录。 */
+int hotness_mark_written(uint32_t read_id)
+{
+	if (!hotness_tbl)
+		return -EINVAL;
+	if (read_id >= hotness_max_ids)
+		return -EINVAL;
+	if (!hotness_tbl[read_id].used)
+		return -EINVAL;
+	if (hotness_used >= hotness_max_ids)
+		return -ENOSPC;
+
+	if (read_id != (hotness_tail_id + 1) % hotness_max_ids)
+		return -EINVAL;
+
+	hotness_tail_id = read_id;
+
+	return 0;
+}
+
+/* 释放指定 read_id 的使用状态。 */
+int hotness_release_read_id(uint32_t read_id)
+{
+	if (!hotness_tbl || read_id >= hotness_max_ids)
+		return -EINVAL;
+
+	if (hotness_tbl[read_id].used)
+		hotness_used--;
+	hotness_tbl[read_id].id = read_id;
+	hotness_tbl[read_id].hotness = 0;
+	hotness_tbl[read_id].used = 0;
+
+	return 0;
 }
 
 /* 返回热度最低的 read_id。 */
@@ -147,7 +152,7 @@ int hotness_get_min_read_id(uint32_t *read_id)
 	return 0;
 }
 
-/* 生成 read_id/<id> 形式的目录路径。 */
+/* 生成 read_XXX 形式的目录路径。 */
 int hotness_get_read_id_dir(uint32_t read_id, char *out_dir, size_t out_len)
 {
 	int ret;
@@ -155,8 +160,8 @@ int hotness_get_read_id_dir(uint32_t read_id, char *out_dir, size_t out_len)
 	if (!out_dir || !out_len)
 		return -EINVAL;
 
-	/* 拼接 read_id 目录路径字符串。 */
-	ret = snprintf(out_dir, out_len, READ_ID_DIR_NAME "/%u", read_id);
+	/* 拼接 read_XXX 目录路径字符串。 */
+	ret = snprintf(out_dir, out_len, READ_ID_DIR_FMT, read_id);
 	if (ret < 0 || (size_t)ret >= out_len)
 		return -ENAMETOOLONG;
 
@@ -167,17 +172,28 @@ int hotness_get_read_id_dir(uint32_t read_id, char *out_dir, size_t out_len)
 int hotness_alloc_read_id(uint32_t *read_id, char *out_dir, size_t out_len)
 {
 	uint32_t id;
+	unsigned int i;
 	int ret;
 
 	if (!hotness_tbl || !read_id)
 		return -EINVAL;
 
-	/* 循环分配 read_id。 */
-	id = hotness_next_id++ % hotness_max_ids;
+	if (hotness_used >= hotness_max_ids)
+		return -ENOSPC;
+
+	/* 从 tail 的下一个位置开始寻找最近的空闲 read_id。 */
+	for (i = 0; i < hotness_max_ids; i++) {
+		id = (hotness_tail_id + 1 + i) % hotness_max_ids;
+		if (!hotness_tbl[id].used)
+			break;
+	}
+	if (i == hotness_max_ids)
+		return -ENOSPC;
+
 	*read_id = id;
 
 	/* 重置已分配 read_id 的热度。 */
-	ret = hotness_reset_read_id(id);
+	ret = hotness_set_read_id_stats(id);
 	if (ret)
 		return ret;
 

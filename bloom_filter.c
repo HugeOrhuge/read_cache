@@ -153,7 +153,7 @@ static int bloom_filter_apply(uint32_t read_id, const char *file_path,
 /* 将文件路径插入指定 read_id 的布隆过滤器。 */
 int bloom_filter_set(uint32_t read_id, const char *file_path)
 {
-	/* Insert the file path into the bloom filter. */
+	/* 将文件路径插入布隆过滤器。 */
 	return bloom_filter_apply(read_id, file_path, 1);
 }
 

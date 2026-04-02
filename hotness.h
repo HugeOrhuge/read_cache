@@ -6,11 +6,17 @@
 
 int hotness_init(unsigned int max_read_ids);
 /* 重置指定 read_id 的热度计数。 */
-int hotness_reset_read_id(uint32_t read_id);
-/* 从路径解析 read_id 并增加热度。 */
-int hotness_update_from_path(const char *path);
+int hotness_set_read_id_stats(uint32_t read_id);
+/* 直接增加指定 read_id 的热度。 */
+int hotness_update_from_path(uint32_t read_id);
 /* 增加指定 read_id 的热度。 */
 int hotness_inc_read_id(uint32_t read_id);
+/* 将 read_id 追加为最新写入记录。 */
+int hotness_mark_written(uint32_t read_id);
+/* 取出热度最小的 read_id。 */
+int hotness_dequeue_oldest(uint32_t *read_id);
+/* 释放指定 read_id 的使用状态。 */
+int hotness_release_read_id(uint32_t read_id);
 /* 查找热度最小的 read_id。 */
 int hotness_get_min_read_id(uint32_t *read_id);
 /* 以循环方式分配新的 read_id。 */
