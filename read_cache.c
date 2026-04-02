@@ -9,32 +9,85 @@
 #include <unistd.h>
 #include <dirent.h>
 #include <errno.h>
+#include <sys/ioctl.h>
+
+#include <linux/f2fs.h>
 
 #include "read_cache.h"
 
 /* 初始化热度表和布隆过滤器子系统。 */
-int read_cache_init(void)
+int read_cache_init(uint64_t read_id_size_bytes)
 {
+	struct f2fs_free_zone_info info;
+	uint64_t zone_bytes;
+	uint64_t total_bytes;
+	uint64_t max_ids64;
+	unsigned int max_ids;
 	int ret;
 
-	ret = hotness_init(READ_ID_MAX);
+	if (!read_id_size_bytes)
+		return -EINVAL;
+	if (read_cache_fs_fd < 0)
+		return -ENODEV;
+
+	ret = ioctl(read_cache_fs_fd, F2FS_IOC_GET_FREE_ZONES, &info);
+	if (ret)
+		return -errno;
+	if (!info.zone_capacity_blocks)
+		return -EINVAL;
+
+	zone_bytes = (uint64_t)info.zone_capacity_blocks * READ_CACHE_BLOCK_SIZE;
+	if (!zone_bytes)
+		return -EINVAL;
+
+	/* max_ids = free_zone_bytes / read_id_size_bytes - 48 */
+	total_bytes = (uint64_t)info.free_zones * zone_bytes;
+	max_ids64 = total_bytes / read_id_size_bytes;
+	if (max_ids64 <= 48)
+		return -ENOSPC;
+	max_ids64 -= 48;
+	if (max_ids64 > UINT_MAX)
+		max_ids64 = UINT_MAX;
+	max_ids = (unsigned int)max_ids64;
+
+	ret = hotness_init(max_ids);
 	/* 初始化内存热度表。 */
 	if (ret)
 		return ret;
 
 	/* 初始化每个 read_id 的布隆过滤器。 */
-	return bloom_filter_init(READ_ID_MAX, BLOOM_FILTER_BYTES,
+	return bloom_filter_init(max_ids, BLOOM_FILTER_BYTES,
 				  BLOOM_FILTER_HASHES);
+}
+
+static int read_cache_fs_fd = -1;
+
+/* 设置用于 ioctl 的 f2fs 文件描述符。 */
+int read_cache_set_fs_fd(int fd)
+{
+	if (fd < 0)
+		return -EINVAL;
+
+	read_cache_fs_fd = fd;
+	return 0;
 }
 
 /* 写入前的设备空间检查占位函数。 */
 int read_cache_check_space(const struct packed_zone *pz)
 {
+	struct f2fs_free_zone_info info;
+	int ret;
+
 	if (!pz)
 		return -EINVAL;
+	if (read_cache_fs_fd < 0)
+		return -ENODEV;
 
-	/* TODO: implement device space and zone checks. */
-	return 1;
+	ret = ioctl(read_cache_fs_fd, F2FS_IOC_GET_FREE_ZONES, &info);
+	if (ret)
+		return -errno;
+
+	return (int)info.free_zones;
 }
 
 /* 递归创建目录，行为类似 mkdir -p。 */

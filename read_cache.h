@@ -12,6 +12,7 @@
 #define BLOOM_FILTER_BYTES	(3 * 1024 * 1024)
 #define BLOOM_FILTER_HASHES	10
 #define READ_ID_DIR_FMT		"read_%03u"
+#define READ_CACHE_BLOCK_SIZE	4096
 
 /* 待写入 read_id 目录的内存文件描述。 */
 struct packed_file {
@@ -28,7 +29,9 @@ struct packed_zone {
 };
 
 /* 初始化热度表和布隆过滤器元数据。 */
-int read_cache_init(void);
+int read_cache_init(uint64_t read_id_size_bytes);
+/* 设置用于 ioctl 的 f2fs 文件描述符。 */
+int read_cache_set_fs_fd(int fd);
 /* 检查设备空间是否足够写入该 packed zone。 */
 int read_cache_check_space(const struct packed_zone *pz);
 /* 删除 read_id 目录下所有文件并移除目录。 */
