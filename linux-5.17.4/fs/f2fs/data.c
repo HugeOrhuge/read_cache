@@ -1587,6 +1587,14 @@ int f2fs_map_blocks(struct inode *inode, struct f2fs_map_blocks *map,
 	}
 
 next_dnode:
+	if (map->m_may_create) {
+		u16 stream_id = F2FS_STREAM_ID_DEFAULT;
+
+		if (!f2fs_get_stream_id(inode, &stream_id) &&
+		    stream_id == F2FS_STREAM_ID_SPIN_WRITE)
+			map->m_seg_type = CURSEG_SPIN_WRITE_DATA;
+	}
+
 	if (map->m_may_create)
 		f2fs_do_map_lock(sbi, flag, true);
 

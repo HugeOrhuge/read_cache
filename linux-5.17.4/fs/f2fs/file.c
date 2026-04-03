@@ -1986,6 +1986,43 @@ static int f2fs_ioc_getversion(struct file *filp, unsigned long arg)
 	return put_user(inode->i_generation, (int __user *)arg);
 }
 
+static int f2fs_ioc_set_stream_id(struct file *filp, unsigned long arg)
+{
+	struct inode *inode = file_inode(filp);
+	u32 id;
+	int ret;
+
+	if (copy_from_user(&id, (void __user *)arg, sizeof(id)))
+		return -EFAULT;
+	if (id > F2FS_STREAM_ID_MAX)
+		return -EINVAL;
+
+	inode_lock(inode);
+	ret = f2fs_set_stream_id(inode, (u16)id);
+	inode_unlock(inode);
+	if (!ret)
+		f2fs_info(F2FS_I_SB(inode),
+			"spin_write: set stream_id=%u ino=%lu",
+			id, inode->i_ino);
+
+	return ret;
+}
+
+static int f2fs_ioc_get_stream_id(struct file *filp, unsigned long arg)
+{
+	struct inode *inode = file_inode(filp);
+	u16 id = F2FS_STREAM_ID_DEFAULT;
+	int ret;
+
+	inode_lock(inode);
+	ret = f2fs_get_stream_id(inode, &id);
+	inode_unlock(inode);
+	if (ret)
+		return ret;
+
+	return put_user((u32)id, (u32 __user *)arg);
+}
+
 static int f2fs_ioc_start_atomic_write(struct file *filp)
 {
 	struct inode *inode = file_inode(filp);
@@ -4349,6 +4386,10 @@ static long __f2fs_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		return f2fs_ioc_compress_file(filp, arg);
 	case F2FS_IOC_GET_FREE_ZONES:
 		return f2fs_ioc_get_free_zones(filp, arg);
+	case F2FS_IOC_SET_STREAM_ID:
+		return f2fs_ioc_set_stream_id(filp, arg);
+	case F2FS_IOC_GET_STREAM_ID:
+		return f2fs_ioc_get_stream_id(filp, arg);
 	default:
 		return -ENOTTY;
 	}

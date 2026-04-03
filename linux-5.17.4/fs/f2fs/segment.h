@@ -23,7 +23,10 @@
 #define GET_L2R_SEGNO(free_i, segno)	((segno) - (free_i)->start_segno)
 #define GET_R2L_SEGNO(free_i, segno)	((segno) + (free_i)->start_segno)
 
-#define IS_DATASEG(t)	((t) <= CURSEG_COLD_DATA)
+#define IS_DATASEG(t)	((t) <= CURSEG_COLD_DATA ||			\
+			 (t) == CURSEG_COLD_DATA_PINNED ||	\
+			 (t) == CURSEG_SPIN_WRITE_DATA ||	\
+			 (t) == CURSEG_ALL_DATA_ATGC)
 #define IS_NODESEG(t)	((t) >= CURSEG_HOT_NODE && (t) <= CURSEG_COLD_NODE)
 
 static inline void sanity_check_seg_type(struct f2fs_sb_info *sbi,
@@ -44,6 +47,7 @@ static inline void sanity_check_seg_type(struct f2fs_sb_info *sbi,
 	 ((seg) == CURSEG_I(sbi, CURSEG_WARM_NODE)->segno) ||	\
 	 ((seg) == CURSEG_I(sbi, CURSEG_COLD_NODE)->segno) ||	\
 	 ((seg) == CURSEG_I(sbi, CURSEG_COLD_DATA_PINNED)->segno) ||	\
+	 ((seg) == CURSEG_I(sbi, CURSEG_SPIN_WRITE_DATA)->segno) ||	\
 	 ((seg) == CURSEG_I(sbi, CURSEG_ALL_DATA_ATGC)->segno))
 
 #define IS_CURSEC(sbi, secno)						\
@@ -60,6 +64,8 @@ static inline void sanity_check_seg_type(struct f2fs_sb_info *sbi,
 	 ((secno) == CURSEG_I(sbi, CURSEG_COLD_NODE)->segno /		\
 	  (sbi)->segs_per_sec) ||	\
 	 ((secno) == CURSEG_I(sbi, CURSEG_COLD_DATA_PINNED)->segno /	\
+	  (sbi)->segs_per_sec) ||	\
+	 ((secno) == CURSEG_I(sbi, CURSEG_SPIN_WRITE_DATA)->segno /	\
 	  (sbi)->segs_per_sec) ||	\
 	 ((secno) == CURSEG_I(sbi, CURSEG_ALL_DATA_ATGC)->segno /	\
 	  (sbi)->segs_per_sec))
@@ -523,6 +529,9 @@ static inline void __set_inuse(struct f2fs_sb_info *sbi,
 		free_i->free_sections--;
 }
 
+void f2fs_spin_write_release_zone(struct f2fs_sb_info *sbi,
+					unsigned int secno);
+
 static inline void __set_test_and_free(struct f2fs_sb_info *sbi,
 		unsigned int segno, bool inmem)
 {
@@ -543,6 +552,7 @@ static inline void __set_test_and_free(struct f2fs_sb_info *sbi,
 		if (next >= start_segno + usable_segs) {
 			if (test_and_clear_bit(secno, free_i->free_secmap))
 				free_i->free_sections++;
+			f2fs_spin_write_release_zone(sbi, secno);
 		}
 	}
 skip_free:

@@ -170,6 +170,7 @@ enum {
 	Opt_gc_merge,
 	Opt_nogc_merge,
 	Opt_discard_unit,
+	Opt_spin_write_zones,
 	Opt_err,
 };
 
@@ -247,6 +248,7 @@ static match_table_t f2fs_tokens = {
 	{Opt_gc_merge, "gc_merge"},
 	{Opt_nogc_merge, "nogc_merge"},
 	{Opt_discard_unit, "discard_unit=%s"},
+	{Opt_spin_write_zones, "spin_write_zones=%u"},
 	{Opt_err, NULL},
 };
 
@@ -1581,6 +1583,14 @@ static int parse_options(struct super_block *sb, char *options, bool is_remount)
 			}
 			kfree(name);
 			break;
+		case Opt_spin_write_zones:
+			if (args->from && match_int(args, &arg))
+				return -EINVAL;
+			if (arg < 0)
+				return -EINVAL;
+			F2FS_OPTION(sbi).spin_write_zones = (unsigned int)arg;
+			F2FS_OPTION(sbi).spin_write_zones_set = true;
+			break;
 		default:
 			f2fs_err(sbi, "Unrecognized mount option \"%s\" or missing value",
 				 p);
@@ -1710,6 +1720,8 @@ static struct inode *f2fs_alloc_inode(struct super_block *sb)
 
 	/* Will be used by directory only */
 	fi->i_dir_level = F2FS_SB(sb)->dir_level;
+	fi->i_stream_id = F2FS_STREAM_ID_DEFAULT;
+	fi->i_stream_cached = false;
 
 	return &fi->vfs_inode;
 }

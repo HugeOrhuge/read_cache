@@ -44,6 +44,8 @@
 #define F2FS_IOC_COMPRESS_FILE		_IO(F2FS_IOCTL_MAGIC, 24)
 #define F2FS_IOC_GET_FREE_ZONES		_IOR(F2FS_IOCTL_MAGIC, 25,	\
 					struct f2fs_free_zone_info)
+#define F2FS_IOC_SET_STREAM_ID		_IOW(F2FS_IOCTL_MAGIC, 26, __u32)
+#define F2FS_IOC_GET_STREAM_ID		_IOR(F2FS_IOCTL_MAGIC, 27, __u32)
 
 /*
  * should be same as XFS_IOC_GOINGDOWN.

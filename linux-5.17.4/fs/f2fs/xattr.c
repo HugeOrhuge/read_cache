@@ -795,6 +795,36 @@ int f2fs_setxattr(struct inode *inode, int index, const char *name,
 	return err;
 }
 
+int f2fs_get_stream_id(struct inode *inode, u16 *id)
+{
+	struct f2fs_inode_info *fi = F2FS_I(inode);
+
+	if (!id)
+		return -EINVAL;
+
+	if (fi->i_stream_cached) {
+		*id = fi->i_stream_id;
+		return 0;
+	}
+
+	fi->i_stream_id = F2FS_STREAM_ID_DEFAULT;
+	fi->i_stream_cached = true;
+	*id = fi->i_stream_id;
+	return 0;
+}
+
+int f2fs_set_stream_id(struct inode *inode, u16 id)
+{
+	struct f2fs_inode_info *fi = F2FS_I(inode);
+
+	if (id > F2FS_STREAM_ID_MAX)
+		return -EINVAL;
+
+	fi->i_stream_id = id;
+	fi->i_stream_cached = true;
+	return 0;
+}
+
 int f2fs_init_xattr_caches(struct f2fs_sb_info *sbi)
 {
 	dev_t dev = sbi->sb->s_bdev->bd_dev;

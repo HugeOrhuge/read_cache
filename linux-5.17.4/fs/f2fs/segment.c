@@ -17,6 +17,7 @@
 #include <linux/freezer.h>
 #include <linux/sched/signal.h>
 #include <linux/random.h>
+#include <linux/bitmap.h>
 
 #include "f2fs.h"
 #include "segment.h"
@@ -37,6 +38,35 @@ static struct kmem_cache *discard_cmd_slab;
 static struct kmem_cache *sit_entry_set_slab;
 static struct kmem_cache *ssa_set_slab;
 static struct kmem_cache *inmem_entry_slab;
+
+static bool f2fs_spin_write_pool_enabled(struct f2fs_sb_info *sbi)
+{
+	struct f2fs_stream_zone_pool *pool = &SM_I(sbi)->spin_write_pool;
+
+	return f2fs_sb_has_blkzoned(sbi) && pool->zone_map && pool->max_zones;
+}
+
+static bool f2fs_spin_write_zone_in_use_by_curseg(struct f2fs_sb_info *sbi,
+						unsigned int zoneno)
+{
+	int i;
+
+	for (i = 0; i < NR_CURSEG_TYPE; i++) {
+		if (CURSEG_I(sbi, i)->zone == zoneno)
+			return true;
+	}
+
+	return false;
+}
+
+void f2fs_spin_write_release_zone(struct f2fs_sb_info *sbi, unsigned int secno)
+{
+	if (!f2fs_spin_write_pool_enabled(sbi))
+		return;
+
+	/* 固定预留模式下，zone 不归还普通流。 */
+	(void)secno;
+}
 
 static unsigned long __reverse_ulong(unsigned char *str)
 {
@@ -2719,6 +2749,19 @@ skip_left:
 	segno = GET_SEG_FROM_SEC(sbi, secno);
 	zoneno = GET_ZONE_FROM_SEC(sbi, secno);
 
+	if (f2fs_spin_write_pool_enabled(sbi) &&
+	    test_bit(zoneno, SM_I(sbi)->spin_write_pool.zone_map)) {
+		/* 跳过预留给 spin_write 的 zone，避免普通流占用。 */
+		if (go_left)
+			hint = zoneno * sbi->secs_per_zone - 1;
+		else if (zoneno + 1 >= total_zones)
+			hint = 0;
+		else
+			hint = (zoneno + 1) * sbi->secs_per_zone;
+		init = false;
+		goto find_other_zone;
+	}
+
 	/* give up on finding another zone */
 	if (!init)
 		goto got_it;
@@ -2816,6 +2859,19 @@ skip_left:
 	segno = GET_SEG_FROM_SEC(sbi, secno);
 	zoneno = GET_ZONE_FROM_SEC(sbi, secno);
 
+	if (f2fs_spin_write_pool_enabled(sbi) &&
+	    test_bit(zoneno, SM_I(sbi)->spin_write_pool.zone_map)) {
+		/* 跳过预留给 spin_write 的 zone，避免普通流占用。 */
+		if (go_left)
+			hint = zoneno * sbi->secs_per_zone - 1;
+		else if (zoneno + 1 >= total_zones)
+			hint = 0;
+		else
+			hint = (zoneno + 1) * sbi->secs_per_zone;
+		init = false;
+		goto find_other_zone;
+	}
+
 	/* give up on finding another zone */
 	if (!init)
 		goto got_it;
@@ -2850,6 +2906,83 @@ got_it:
 	__set_inuse(sbi, segno);
 	*newseg = segno;
 	spin_unlock(&free_i->segmap_lock);
+}
+
+static bool get_new_segment_spin_write(struct f2fs_sb_info *sbi,
+			unsigned int *newseg, bool new_sec, int dir)
+{
+	struct free_segmap_info *free_i = FREE_I(sbi);
+	struct f2fs_stream_zone_pool *pool = &SM_I(sbi)->spin_write_pool;
+	unsigned int segno;
+	unsigned int secno;
+	unsigned int zoneno;
+	unsigned int hint = GET_SEC_FROM_SEG(sbi, *newseg);
+	unsigned int total_secs = MAIN_SECS(sbi);
+	unsigned int scan;
+
+	if (!f2fs_spin_write_pool_enabled(sbi))
+		return false;
+
+	(void)dir;
+
+	spin_lock(&free_i->segmap_lock);
+	spin_lock(&pool->lock);
+
+	scan = hint;
+
+	if (!new_sec && ((*newseg + 1) % sbi->segs_per_sec)) {
+		segno = find_next_zero_bit(free_i->free_segmap,
+			GET_SEG_FROM_SEC(sbi, hint + 1), *newseg + 1);
+		if (segno < GET_SEG_FROM_SEC(sbi, hint + 1)) {
+			zoneno = GET_ZONE_FROM_SEG(sbi, segno);
+			if (f2fs_spin_write_zone_in_use_by_curseg(sbi, zoneno)) {
+				scan = GET_SEC_FROM_SEG(sbi, segno) + 1;
+				goto retry_scan;
+			}
+			if (!test_bit(zoneno, pool->zone_map)) {
+				scan = GET_SEC_FROM_SEG(sbi, segno) + 1;
+				goto retry_scan;
+			}
+			goto got_it;
+		}
+	}
+
+retry_scan:
+	secno = find_next_zero_bit(free_i->free_secmap, total_secs, scan);
+	if (secno >= total_secs) {
+		if (scan == 0)
+			goto fail;
+		scan = 0;
+		goto retry_scan;
+	}
+
+	zoneno = GET_ZONE_FROM_SEC(sbi, secno);
+	if (f2fs_spin_write_zone_in_use_by_curseg(sbi, zoneno)) {
+		scan = secno + 1;
+		goto retry_scan;
+	}
+
+	if (!test_bit(zoneno, pool->zone_map)) {
+		scan = secno + 1;
+		goto retry_scan;
+	}
+
+	segno = GET_SEG_FROM_SEC(sbi, secno);
+got_it:
+	f2fs_bug_on(sbi, test_bit(segno, free_i->free_segmap));
+	zoneno = GET_ZONE_FROM_SEG(sbi, segno);
+	f2fs_info(sbi, "spin_write: pick segno=%u zoneno=%u", segno, zoneno);
+	__set_inuse(sbi, segno);
+	*newseg = segno;
+	spin_unlock(&pool->lock);
+	spin_unlock(&free_i->segmap_lock);
+	return true;
+
+fail:
+	f2fs_info(sbi, "spin_write: no reserved zone found");
+	spin_unlock(&pool->lock);
+	spin_unlock(&free_i->segmap_lock);
+	return false;
 }
 
 static void reset_curseg(struct f2fs_sb_info *sbi, int type, int modified)
@@ -2936,7 +3069,12 @@ static void new_curseg(struct f2fs_sb_info *sbi, int type, bool new_sec)
 		dir = ALLOC_RIGHT;
 
 	segno = __get_next_segno(sbi, type);
-	get_new_segment(sbi, &segno, new_sec, dir);
+	if (type == CURSEG_SPIN_WRITE_DATA) {
+		if (!get_new_segment_spin_write(sbi, &segno, new_sec, dir))
+			get_new_segment(sbi, &segno, new_sec, dir);
+	} else {
+		get_new_segment(sbi, &segno, new_sec, dir);
+	}
 	curseg->next_segno = segno;
 	reset_curseg(sbi, type, 1);
 	curseg->alloc_type = LFS;
@@ -3508,6 +3646,7 @@ out:
 void f2fs_save_inmem_curseg(struct f2fs_sb_info *sbi)
 {
 	__f2fs_save_inmem_curseg(sbi, CURSEG_COLD_DATA_PINNED);
+	__f2fs_save_inmem_curseg(sbi, CURSEG_SPIN_WRITE_DATA);
 
 	if (sbi->am.atgc_enabled)
 		__f2fs_save_inmem_curseg(sbi, CURSEG_ALL_DATA_ATGC);
@@ -3533,6 +3672,7 @@ out:
 void f2fs_restore_inmem_curseg(struct f2fs_sb_info *sbi)
 {
 	__f2fs_restore_inmem_curseg(sbi, CURSEG_COLD_DATA_PINNED);
+	__f2fs_restore_inmem_curseg(sbi, CURSEG_SPIN_WRITE_DATA);
 
 	if (sbi->am.atgc_enabled)
 		__f2fs_restore_inmem_curseg(sbi, CURSEG_ALL_DATA_ATGC);
@@ -4031,6 +4171,14 @@ static int __get_segment_type_6(struct f2fs_io_info *fio)
 
 		if (is_inode_flag_set(inode, FI_ALIGNED_WRITE))
 			return CURSEG_COLD_DATA_PINNED;
+
+		{
+			u16 stream_id = F2FS_STREAM_ID_DEFAULT;
+
+			if (!f2fs_get_stream_id(inode, &stream_id) &&
+			    stream_id == F2FS_STREAM_ID_SPIN_WRITE)
+				return CURSEG_SPIN_WRITE_DATA;
+		}
 
 		if (page_private_gcing(fio->page)) {
 			if (fio->sbi->am.atgc_enabled &&
@@ -6313,6 +6461,8 @@ static int build_curseg(struct f2fs_sb_info *sbi)
 			array[i].seg_type = CURSEG_HOT_DATA + i;
 		else if (i == CURSEG_COLD_DATA_PINNED)
 			array[i].seg_type = CURSEG_COLD_DATA;
+		else if (i == CURSEG_SPIN_WRITE_DATA)
+			array[i].seg_type = CURSEG_COLD_DATA;
 		else if (i == CURSEG_ALL_DATA_ATGC)
 			array[i].seg_type = CURSEG_COLD_DATA;
 		array[i].segno = NULL_SEGNO;
@@ -7200,6 +7350,81 @@ static void init_min_max_mtime(struct f2fs_sb_info *sbi)
 	up_write(&sit_i->sentry_lock);
 }
 
+static int init_spin_write_pool(struct f2fs_sb_info *sbi)
+{
+	struct f2fs_stream_zone_pool *pool = &SM_I(sbi)->spin_write_pool;
+	unsigned int total_zones;
+	unsigned int target_zones;
+
+	if (!f2fs_sb_has_blkzoned(sbi))
+		return 0;
+	if (F2FS_OPTION(sbi).spin_write_zones_set)
+		target_zones = F2FS_OPTION(sbi).spin_write_zones;
+	else
+		target_zones = F2FS_SPIN_WRITE_MAX_ZONES;
+	if (!target_zones)
+		return 0;
+
+	total_zones = MAIN_SECS(sbi) / sbi->secs_per_zone;
+	pool->max_zones = min_t(unsigned int, target_zones, total_zones);
+	pool->used_zones = 0;
+	pool->total_zones = total_zones;
+	pool->zone_map = bitmap_zalloc(total_zones, GFP_KERNEL);
+	if (!pool->zone_map)
+		return -ENOMEM;
+	spin_lock_init(&pool->lock);
+	f2fs_info(sbi,
+		"spin_write: init pool total_zones=%u max_zones=%u requested=%u",
+		pool->total_zones, pool->max_zones, target_zones);
+	return 0;
+}
+
+static int reserve_spin_write_zones(struct f2fs_sb_info *sbi)
+{
+	struct f2fs_stream_zone_pool *pool = &SM_I(sbi)->spin_write_pool;
+	struct free_segmap_info *free_i = FREE_I(sbi);
+	unsigned int zoneno;
+	unsigned int reserved = 0;
+
+	if (!f2fs_spin_write_pool_enabled(sbi))
+		return 0;
+
+	for (zoneno = 0; zoneno < pool->total_zones; zoneno++) {
+		unsigned int zone_start = zoneno * sbi->secs_per_zone;
+		unsigned int zone_end = zone_start + sbi->secs_per_zone;
+
+		if (reserved >= pool->max_zones)
+			break;
+		if (find_next_zero_bit(free_i->free_secmap, zone_end, zone_start) >=
+				zone_end)
+			continue;
+
+		__set_bit(zoneno, pool->zone_map);
+		reserved++;
+	}
+
+	pool->used_zones = reserved;
+	if (reserved < pool->max_zones) {
+		f2fs_warn(sbi, "spin_write: reserve zones failed %u/%u",
+				reserved, pool->max_zones);
+		return -ENOSPC;
+	}
+	f2fs_info(sbi, "spin_write: reserved zones=%u",
+			pool->used_zones);
+	return 0;
+}
+
+static void destroy_spin_write_pool(struct f2fs_sb_info *sbi)
+{
+	struct f2fs_stream_zone_pool *pool = &SM_I(sbi)->spin_write_pool;
+
+	bitmap_free(pool->zone_map);
+	pool->zone_map = NULL;
+	pool->used_zones = 0;
+	pool->total_zones = 0;
+	pool->max_zones = 0;
+}
+
 int f2fs_build_segment_manager(struct f2fs_sb_info *sbi)
 {
 	struct f2fs_super_block *raw_super = F2FS_RAW_SUPER(sbi);
@@ -7302,6 +7527,10 @@ sm_info->grid_cnt = 1;
 	sm_info->min_hot_blocks = DEF_MIN_HOT_BLOCKS;
 	sm_info->min_ssr_sections = reserved_sections(sbi);
 
+	err = init_spin_write_pool(sbi);
+	if (err)
+		return err;
+
 	INIT_LIST_HEAD(&sm_info->sit_entry_set);
 
 	init_rwsem(&sm_info->curseg_lock);
@@ -7339,6 +7568,9 @@ sm_info->grid_cnt = 1;
 		return err;
 
 	init_free_segmap(sbi);
+	err = reserve_spin_write_zones(sbi);
+	if (err)
+		return err;
 	err = build_dirty_segmap(sbi);
 	if (err)
 		return err;
@@ -7457,6 +7689,7 @@ void f2fs_destroy_segment_manager(struct f2fs_sb_info *sbi)
 
 	if (!sm_info)
 		return;
+	destroy_spin_write_pool(sbi);
 	f2fs_destroy_flush_cmd_control(sbi, true);
 	destroy_discard_cmd_control(sbi);
 	destroy_dirty_segmap(sbi);
