@@ -38,6 +38,11 @@ int read_cache_check_space(const struct packed_zone *pz);
 /* 设置/获取 packed_zone 刷写阈值（字节）。 */
 int read_cache_set_packed_zone_threshold(size_t bytes);
 size_t read_cache_get_packed_zone_threshold(void);
+/* 启动/停止后台打包线程。 */
+int read_cache_start_worker(void);
+void read_cache_stop_worker(void);
+/* 入队一个需要打包的文件（由后台线程读取）。 */
+int read_cache_enqueue_file(const char *path, int fd);
 /* 删除 read_id 目录下所有文件并移除目录。 */
 int read_cache_unlink_read_id_dir(const char *read_id_dir);
 /* 将文件读入内存并追加到 packed_zone。 */

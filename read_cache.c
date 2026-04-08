@@ -1,5 +1,7 @@
 #include <fcntl.h>
 #include <limits.h>
+#include <pthread.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -63,6 +65,21 @@ int read_cache_init(uint64_t read_id_size_bytes)
 static int read_cache_fs_fd = -1;
 static size_t packed_zone_threshold_bytes = READ_CACHE_DEFAULT_PACKED_ZONE_BYTES;
 
+struct read_cache_queue_item {
+	char *path;
+	int fd;
+	struct read_cache_queue_item *next;
+};
+
+static pthread_t read_cache_worker;
+static pthread_mutex_t read_cache_queue_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t read_cache_queue_cond = PTHREAD_COND_INITIALIZER;
+static struct read_cache_queue_item *read_cache_queue_head;
+static struct read_cache_queue_item *read_cache_queue_tail;
+static struct packed_zone read_cache_packed_zone;
+static bool read_cache_worker_running;
+static bool read_cache_worker_stop;
+
 /* 设置用于 ioctl 的 f2fs 文件描述符。 */
 int read_cache_set_fs_fd(int fd)
 {
@@ -91,6 +108,87 @@ int read_cache_check_space(const struct packed_zone *pz)
 	return (int)info.free_zones;
 }
 
+static void read_cache_queue_push(struct read_cache_queue_item *item)
+{
+	if (!read_cache_queue_tail) {
+		read_cache_queue_head = item;
+		read_cache_queue_tail = item;
+		return;
+	}
+
+	read_cache_queue_tail->next = item;
+	read_cache_queue_tail = item;
+}
+
+static struct read_cache_queue_item *read_cache_queue_pop(void)
+{
+	struct read_cache_queue_item *item = read_cache_queue_head;
+
+	if (!item)
+		return NULL;
+
+	read_cache_queue_head = item->next;
+	if (!read_cache_queue_head)
+		read_cache_queue_tail = NULL;
+	item->next = NULL;
+	return item;
+}
+
+static void read_cache_queue_clear(void)
+{
+	struct read_cache_queue_item *item = read_cache_queue_head;
+
+	while (item) {
+		struct read_cache_queue_item *next = item->next;
+		close(item->fd);
+		free(item->path);
+		free(item);
+		item = next;
+	}
+
+	read_cache_queue_head = NULL;
+	read_cache_queue_tail = NULL;
+}
+
+static void *read_cache_worker_main(void *unused)
+{
+	(void)unused;
+
+	for (;;) {
+		struct read_cache_queue_item *item = NULL;
+		int ret;
+
+		pthread_mutex_lock(&read_cache_queue_lock);
+		while (!read_cache_worker_stop && !read_cache_queue_head)
+			pthread_cond_wait(&read_cache_queue_cond, &read_cache_queue_lock);
+		if (read_cache_worker_stop && !read_cache_queue_head) {
+			pthread_mutex_unlock(&read_cache_queue_lock);
+			break;
+		}
+		item = read_cache_queue_pop();
+		pthread_mutex_unlock(&read_cache_queue_lock);
+
+		if (!item)
+			continue;
+
+		ret = packed_zone_add_file_from_fd(&read_cache_packed_zone,
+						    item->path, item->fd);
+		close(item->fd);
+		free(item->path);
+		free(item);
+
+		if (ret)
+			continue;
+
+		if (packed_zone_should_flush(&read_cache_packed_zone) > 0) {
+			if (!packed_zone_flush(&read_cache_packed_zone))
+				packed_zone_free(&read_cache_packed_zone);
+		}
+	}
+
+	return NULL;
+}
+
 /* 设置 packed_zone 刷写阈值（字节）。 */
 int read_cache_set_packed_zone_threshold(size_t bytes)
 {
@@ -105,6 +203,89 @@ int read_cache_set_packed_zone_threshold(size_t bytes)
 size_t read_cache_get_packed_zone_threshold(void)
 {
 	return packed_zone_threshold_bytes;
+}
+
+/* 启动后台打包线程。 */
+int read_cache_start_worker(void)
+{
+	int ret;
+
+	if (read_cache_worker_running)
+		return 0;
+
+	read_cache_worker_stop = false;
+	read_cache_worker_running = true;
+	read_cache_packed_zone.files = NULL;
+	read_cache_packed_zone.total_bytes = 0;
+
+	ret = pthread_create(&read_cache_worker, NULL,
+			     read_cache_worker_main, NULL);
+	if (ret) {
+		read_cache_worker_running = false;
+		return -ret;
+	}
+
+	return 0;
+}
+
+/* 停止后台打包线程。 */
+void read_cache_stop_worker(void)
+{
+	if (!read_cache_worker_running)
+		return;
+
+	pthread_mutex_lock(&read_cache_queue_lock);
+	read_cache_worker_stop = true;
+	pthread_cond_broadcast(&read_cache_queue_cond);
+	pthread_mutex_unlock(&read_cache_queue_lock);
+
+	pthread_join(read_cache_worker, NULL);
+	read_cache_worker_running = false;
+
+	packed_zone_free(&read_cache_packed_zone);
+	read_cache_queue_clear();
+}
+
+/* 入队一个需要打包的文件（由后台线程读取）。 */
+int read_cache_enqueue_file(const char *path, int fd)
+{
+	struct read_cache_queue_item *item;
+	char *path_copy;
+	int dup_fd;
+
+	if (!path)
+		return -EINVAL;
+	if (fd < 0)
+		return -EINVAL;
+	if (!read_cache_worker_running)
+		return -ENODEV;
+
+	dup_fd = dup(fd);
+	if (dup_fd < 0)
+		return -errno;
+
+	path_copy = strdup(path);
+	if (!path_copy) {
+		close(dup_fd);
+		return -ENOMEM;
+	}
+
+	item = calloc(1, sizeof(*item));
+	if (!item) {
+		free(path_copy);
+		close(dup_fd);
+		return -ENOMEM;
+	}
+
+	item->path = path_copy;
+	item->fd = dup_fd;
+
+	pthread_mutex_lock(&read_cache_queue_lock);
+	read_cache_queue_push(item);
+	pthread_cond_signal(&read_cache_queue_cond);
+	pthread_mutex_unlock(&read_cache_queue_lock);
+
+	return 0;
 }
 
 /* 判断 packed_zone 是否满足刷写阈值。 */
