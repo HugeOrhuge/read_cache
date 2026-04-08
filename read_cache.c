@@ -61,6 +61,7 @@ int read_cache_init(uint64_t read_id_size_bytes)
 }
 
 static int read_cache_fs_fd = -1;
+static size_t packed_zone_threshold_bytes = READ_CACHE_DEFAULT_PACKED_ZONE_BYTES;
 
 /* 设置用于 ioctl 的 f2fs 文件描述符。 */
 int read_cache_set_fs_fd(int fd)
@@ -88,6 +89,136 @@ int read_cache_check_space(const struct packed_zone *pz)
 		return -errno;
 
 	return (int)info.free_zones;
+}
+
+/* 设置 packed_zone 刷写阈值（字节）。 */
+int read_cache_set_packed_zone_threshold(size_t bytes)
+{
+	if (!bytes)
+		return -EINVAL;
+
+	packed_zone_threshold_bytes = bytes;
+	return 0;
+}
+
+/* 获取 packed_zone 刷写阈值（字节）。 */
+size_t read_cache_get_packed_zone_threshold(void)
+{
+	return packed_zone_threshold_bytes;
+}
+
+/* 判断 packed_zone 是否满足刷写阈值。 */
+int packed_zone_should_flush(const struct packed_zone *pz)
+{
+	if (!pz)
+		return -EINVAL;
+
+	return pz->total_bytes >= packed_zone_threshold_bytes;
+}
+
+/* 释放 packed_zone 中的所有文件数据。 */
+void packed_zone_free(struct packed_zone *pz)
+{
+	struct packed_file *file;
+	struct packed_file *next;
+
+	if (!pz)
+		return;
+
+	file = pz->files;
+	while (file) {
+		next = file->next;
+		free((void *)file->path);
+		free((void *)file->data);
+		free(file);
+		file = next;
+	}
+
+	pz->files = NULL;
+	pz->total_bytes = 0;
+}
+
+/* 将文件读入内存并追加到 packed_zone。 */
+int packed_zone_add_file_from_fd(struct packed_zone *pz, const char *path, int fd)
+{
+	struct packed_file *file;
+	struct stat st;
+	char *path_copy;
+	void *buf = NULL;
+	uint64_t size;
+	off_t offset = 0;
+	int ret;
+
+	if (!pz || !path)
+		return -EINVAL;
+	if (fd < 0)
+		return -EINVAL;
+	if (fstat(fd, &st))
+		return -errno;
+	if (!S_ISREG(st.st_mode))
+		return -EINVAL;
+	if (st.st_size < 0)
+		return -EINVAL;
+	if ((uint64_t)st.st_size > (uint64_t)LLONG_MAX)
+		return -EFBIG;
+	if ((uint64_t)st.st_size > (uint64_t)SIZE_MAX)
+		return -EFBIG;
+
+	size = (uint64_t)st.st_size;
+	if (size) {
+		buf = malloc(size);
+		if (!buf)
+			return -ENOMEM;
+
+		while (size) {
+			size_t chunk = size;
+			ssize_t read_bytes;
+
+			if (chunk > (size_t)SSIZE_MAX)
+				chunk = (size_t)SSIZE_MAX;
+
+			read_bytes = pread(fd, (char *)buf + (size_t)offset, chunk, offset);
+			if (read_bytes < 0) {
+				if (errno == EINTR)
+					continue;
+				ret = -errno;
+				goto out_free;
+			}
+			if (read_bytes == 0) {
+				ret = -EIO;
+				goto out_free;
+			}
+
+			offset += read_bytes;
+			size -= (uint64_t)read_bytes;
+		}
+	}
+
+	path_copy = strdup(path);
+	if (!path_copy) {
+		ret = -ENOMEM;
+		goto out_free;
+	}
+
+	file = calloc(1, sizeof(*file));
+	if (!file) {
+		free(path_copy);
+		ret = -ENOMEM;
+		goto out_free;
+	}
+
+	file->path = path_copy;
+	file->data = buf;
+	file->size = (size_t)st.st_size;
+	file->next = pz->files;
+	pz->files = file;
+	pz->total_bytes += file->size;
+
+	return 0;
+
+out_free:
+	free(buf);
+	return ret;
 }
 
 /* 递归创建目录，行为类似 mkdir -p。 */
