@@ -68,17 +68,24 @@ static size_t packed_zone_threshold_bytes = READ_CACHE_DEFAULT_PACKED_ZONE_BYTES
 struct read_cache_queue_item {
 	char *path;
 	int fd;
-	struct read_cache_queue_item *next;
+	struct list_head list;
 };
 
 static pthread_t read_cache_worker;
 static pthread_mutex_t read_cache_queue_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t read_cache_queue_cond = PTHREAD_COND_INITIALIZER;
-static struct read_cache_queue_item *read_cache_queue_head;
-static struct read_cache_queue_item *read_cache_queue_tail;
+static LIST_HEAD(read_cache_queue);
 static struct packed_zone read_cache_packed_zone;
 static bool read_cache_worker_running;
 static bool read_cache_worker_stop;
+
+static void packed_zone_init_if_needed(struct packed_zone *pz)
+{
+	if (!pz)
+		return;
+	if (!pz->files.next && !pz->files.prev)
+		INIT_LIST_HEAD(&pz->files);
+}
 
 /* 设置用于 ioctl 的 f2fs 文件描述符。 */
 int read_cache_set_fs_fd(int fd)
@@ -110,44 +117,37 @@ int read_cache_check_space(const struct packed_zone *pz)
 
 static void read_cache_queue_push(struct read_cache_queue_item *item)
 {
-	if (!read_cache_queue_tail) {
-		read_cache_queue_head = item;
-		read_cache_queue_tail = item;
-		return;
-	}
-
-	read_cache_queue_tail->next = item;
-	read_cache_queue_tail = item;
+	list_add_tail(&item->list, &read_cache_queue);
 }
 
 static struct read_cache_queue_item *read_cache_queue_pop(void)
 {
-	struct read_cache_queue_item *item = read_cache_queue_head;
+	struct read_cache_queue_item *item;
 
-	if (!item)
+	if (list_empty(&read_cache_queue))
 		return NULL;
 
-	read_cache_queue_head = item->next;
-	if (!read_cache_queue_head)
-		read_cache_queue_tail = NULL;
-	item->next = NULL;
+	item = list_first_entry(&read_cache_queue,
+					struct read_cache_queue_item,
+					list);
+	list_del(&item->list);
 	return item;
 }
 
 static void read_cache_queue_clear(void)
 {
-	struct read_cache_queue_item *item = read_cache_queue_head;
+	struct list_head *pos;
+	struct list_head *next;
 
-	while (item) {
-		struct read_cache_queue_item *next = item->next;
+	list_for_each_safe(pos, next, &read_cache_queue) {
+		struct read_cache_queue_item *item;
+
+		item = list_entry(pos, struct read_cache_queue_item, list);
+		list_del(&item->list);
 		close(item->fd);
 		free(item->path);
 		free(item);
-		item = next;
 	}
-
-	read_cache_queue_head = NULL;
-	read_cache_queue_tail = NULL;
 }
 
 static void *read_cache_worker_main(void *unused)
@@ -159,9 +159,9 @@ static void *read_cache_worker_main(void *unused)
 		int ret;
 
 		pthread_mutex_lock(&read_cache_queue_lock);
-		while (!read_cache_worker_stop && !read_cache_queue_head)
+		while (!read_cache_worker_stop && list_empty(&read_cache_queue))
 			pthread_cond_wait(&read_cache_queue_cond, &read_cache_queue_lock);
-		if (read_cache_worker_stop && !read_cache_queue_head) {
+		if (read_cache_worker_stop && list_empty(&read_cache_queue)) {
 			pthread_mutex_unlock(&read_cache_queue_lock);
 			break;
 		}
@@ -215,7 +215,8 @@ int read_cache_start_worker(void)
 
 	read_cache_worker_stop = false;
 	read_cache_worker_running = true;
-	read_cache_packed_zone.files = NULL;
+	INIT_LIST_HEAD(&read_cache_queue);
+	INIT_LIST_HEAD(&read_cache_packed_zone.files);
 	read_cache_packed_zone.total_bytes = 0;
 
 	ret = pthread_create(&read_cache_worker, NULL,
@@ -279,6 +280,7 @@ int read_cache_enqueue_file(const char *path, int fd)
 
 	item->path = path_copy;
 	item->fd = dup_fd;
+	INIT_LIST_HEAD(&item->list);
 
 	pthread_mutex_lock(&read_cache_queue_lock);
 	read_cache_queue_push(item);
@@ -300,22 +302,23 @@ int packed_zone_should_flush(const struct packed_zone *pz)
 /* 释放 packed_zone 中的所有文件数据。 */
 void packed_zone_free(struct packed_zone *pz)
 {
-	struct packed_file *file;
-	struct packed_file *next;
+	struct list_head *pos;
+	struct list_head *next;
 
 	if (!pz)
 		return;
 
-	file = pz->files;
-	while (file) {
-		next = file->next;
+	packed_zone_init_if_needed(pz);
+
+	list_for_each_safe(pos, next, &pz->files) {
+		struct packed_file *file = list_entry(pos, struct packed_file, list);
+		list_del(&file->list);
 		free((void *)file->path);
 		free((void *)file->data);
 		free(file);
-		file = next;
 	}
 
-	pz->files = NULL;
+	INIT_LIST_HEAD(&pz->files);
 	pz->total_bytes = 0;
 }
 
@@ -332,6 +335,7 @@ int packed_zone_add_file_from_fd(struct packed_zone *pz, const char *path, int f
 
 	if (!pz || !path)
 		return -EINVAL;
+	packed_zone_init_if_needed(pz);
 	if (fd < 0)
 		return -EINVAL;
 	if (fstat(fd, &st))
@@ -391,8 +395,8 @@ int packed_zone_add_file_from_fd(struct packed_zone *pz, const char *path, int f
 	file->path = path_copy;
 	file->data = buf;
 	file->size = (size_t)st.st_size;
-	file->next = pz->files;
-	pz->files = file;
+	INIT_LIST_HEAD(&file->list);
+	list_add(&file->list, &pz->files);
 	pz->total_bytes += file->size;
 
 	return 0;
@@ -560,6 +564,7 @@ out:
 int packed_zone_flush(struct packed_zone *pz)
 {
 	struct packed_file *file;
+	struct list_head *pos;
 	char evict_dir[PATH_MAX];
 	char read_id_dir[PATH_MAX];
 	char file_path[PATH_MAX];
@@ -569,6 +574,8 @@ int packed_zone_flush(struct packed_zone *pz)
 
 	if (!pz)
 		return -EINVAL;
+
+	packed_zone_init_if_needed(pz);
 
 	/* 写入前检查空间，不足则驱逐热度最小的 read_id。 */
 	while (read_cache_check_space(pz) <= 0) {
@@ -612,7 +619,8 @@ int packed_zone_flush(struct packed_zone *pz)
 	/* 重置该 read_id 的布隆过滤器位图。 */
 	bloom_filter_reset_read_id(read_id);
 
-	for (file = pz->files; file; file = file->next) {
+	list_for_each(pos, &pz->files) {
+		file = list_entry(pos, struct packed_file, list);
 		/* 生成 read_id 目录下的完整路径。 */
 		if (snprintf(file_path, sizeof(file_path), "%s/%s",
 			     read_id_dir, file->path) >= (int)sizeof(file_path))
@@ -679,7 +687,8 @@ static int read_cache_try_read(uint32_t read_id, const char *file_path)
 /* 查询缓存路径，命中则返回打开的 fd。 */
 int read_cache_query(const char *file_path)
 {
-	struct read_id_list *candidates = NULL;
+	LIST_HEAD(candidates);
+	struct list_head *pos;
 	struct read_id_list *cur;
 	int ret;
 	int fd;
@@ -694,22 +703,23 @@ int read_cache_query(const char *file_path)
 	if (ret == 0)
 		return -ENOENT;
 
-	for (cur = candidates; cur; cur = cur->next) {
+	list_for_each(pos, &candidates) {
+		cur = list_entry(pos, struct read_id_list, list);
 		/* 依次在候选 read_id 下尝试打开文件。 */
 		fd = read_cache_try_read(cur->id, file_path);
 		if (fd == -ENAMETOOLONG) {
 			/* 路径错误时先释放候选列表。 */
-			bloom_filter_free_list(candidates);
+			bloom_filter_free_list(&candidates);
 			return fd;
 		}
 		if (fd >= 0) {
 			/* 命中后释放候选列表并返回 fd。 */
-			bloom_filter_free_list(candidates);
+			bloom_filter_free_list(&candidates);
 			return fd;
 		}
 	}
 
 	/* 遍历结束后释放候选列表。 */
-	bloom_filter_free_list(candidates);
+	bloom_filter_free_list(&candidates);
 	return -ENOENT;
 }

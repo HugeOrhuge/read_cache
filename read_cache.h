@@ -6,6 +6,7 @@
 
 #include "hotness.h"
 #include "bloom_filter.h"
+#include "list.h"
 
 /* 内存元数据和布隆过滤器的默认参数。 */
 #define READ_ID_MAX		256
@@ -20,12 +21,12 @@ struct packed_file {
 	const char		*path;
 	const void		*data;
 	size_t			size;
-	struct packed_file	*next;
+	struct list_head	list;
 };
 
 /* 一个 packed zone 内的文件链表。 */
 struct packed_zone {
-	struct packed_file	*files;
+	struct list_head	files;
 	size_t			total_bytes;
 };
 

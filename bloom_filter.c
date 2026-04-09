@@ -158,10 +158,8 @@ int bloom_filter_set(uint32_t read_id, const char *file_path)
 }
 
 /* 查询布隆过滤器并构建候选 read_id 列表。 */
-int bloom_filter_query(const char *file_path, struct read_id_list **out_list)
+int bloom_filter_query(const char *file_path, struct list_head *out_list)
 {
-	struct read_id_list *head = NULL;
-	struct read_id_list *tail = NULL;
 	unsigned int i;
 	int count = 0;
 	int ret;
@@ -169,48 +167,48 @@ int bloom_filter_query(const char *file_path, struct read_id_list **out_list)
 	if (!filters || !out_list || !file_path)
 		return -EINVAL;
 
+	INIT_LIST_HEAD(out_list);
+
 	for (i = 0; i < filters_max_ids; i++) {
 		/* 逐个检查每个 read_id 的过滤器。 */
 		ret = bloom_filter_apply(i, file_path, 0);
 		if (ret <= 0)
 			continue;
 
-		if (!head) {
-			/* 首次命中创建头结点。 */
-			head = calloc(1, sizeof(*head));
-			if (!head)
+		{
+			struct read_id_list *node;
+
+			/* 命中时创建并追加节点。 */
+			node = calloc(1, sizeof(*node));
+			if (!node)
 				goto out_free;
-			head->id = i;
-			tail = head;
-		} else {
-			/* 后续命中追加节点。 */
-			tail->next = calloc(1, sizeof(*tail->next));
-			if (!tail->next)
-				goto out_free;
-			tail = tail->next;
-			tail->id = i;
+			node->id = i;
+			INIT_LIST_HEAD(&node->list);
+			list_add_tail(&node->list, out_list);
 		}
 		count++;
 	}
 
-	*out_list = head;
 	return count;
 
 out_free:
 	/* 分配失败时释放部分链表。 */
-	bloom_filter_free_list(head);
+	bloom_filter_free_list(out_list);
 	return -ENOMEM;
 }
 
 /* 释放候选 read_id 链表。 */
-void bloom_filter_free_list(struct read_id_list *list)
+void bloom_filter_free_list(struct list_head *list)
 {
-	struct read_id_list *next;
+	struct list_head *pos;
+	struct list_head *next;
 
-	while (list) {
-		/* 释放前保存 next 指针。 */
-		next = list->next;
-		free(list);
-		list = next;
+	if (!list)
+		return;
+
+	list_for_each_safe(pos, next, list) {
+		struct read_id_list *node = list_entry(pos, struct read_id_list, list);
+		list_del(&node->list);
+		free(node);
 	}
 }
