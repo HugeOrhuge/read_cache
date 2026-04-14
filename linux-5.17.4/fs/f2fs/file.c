@@ -1992,6 +1992,9 @@ static int f2fs_ioc_set_stream_id(struct file *filp, unsigned long arg)
 	u32 id;
 	int ret;
 
+	f2fs_info(F2FS_I_SB(inode),
+		"ioctl: set_stream_id enter ino=%lu pid=%d comm=%s",
+		inode->i_ino, task_pid_nr(current), current->comm);
 	if (copy_from_user(&id, (void __user *)arg, sizeof(id)))
 		return -EFAULT;
 	if (id > F2FS_STREAM_ID_MAX)
@@ -2004,6 +2007,10 @@ static int f2fs_ioc_set_stream_id(struct file *filp, unsigned long arg)
 		f2fs_info(F2FS_I_SB(inode),
 			"spin_write: set stream_id=%u ino=%lu",
 			id, inode->i_ino);
+	else
+		f2fs_err(F2FS_I_SB(inode),
+			"ioctl: set_stream_id failed ino=%lu id=%u err=%d",
+			inode->i_ino, id, ret);
 
 	return ret;
 }
@@ -2014,11 +2021,18 @@ static int f2fs_ioc_get_stream_id(struct file *filp, unsigned long arg)
 	u16 id = F2FS_STREAM_ID_DEFAULT;
 	int ret;
 
+	f2fs_info(F2FS_I_SB(inode),
+		"ioctl: get_stream_id enter ino=%lu pid=%d comm=%s",
+		inode->i_ino, task_pid_nr(current), current->comm);
 	inode_lock(inode);
 	ret = f2fs_get_stream_id(inode, &id);
 	inode_unlock(inode);
 	if (ret)
 		return ret;
+
+	f2fs_info(F2FS_I_SB(inode),
+		"spin_write: get stream_id=%u ino=%lu",
+		id, inode->i_ino);
 
 	return put_user((u32)id, (u32 __user *)arg);
 }
@@ -3089,6 +3103,8 @@ static int f2fs_ioc_get_free_zones(struct file *filp, unsigned long arg)
 	u64 prefree_blocks;
 	int ret;
 
+	f2fs_info(sbi, "ioctl: get_free_zones enter pid=%d comm=%s",
+		task_pid_nr(current), current->comm);
 	if (!f2fs_sb_has_blkzoned(sbi))
 		return -EOPNOTSUPP;
 
@@ -3122,6 +3138,11 @@ static int f2fs_ioc_get_free_zones(struct file *filp, unsigned long arg)
 		free_zones -= reserved_zones;
 	else
 		free_zones = 0;
+
+	f2fs_info(sbi,
+		"get_free_zones: free=%u empty=%u total=%u reserved=%u prefree=%u cap_blks=%u",
+		free_zones, empty_zones, total_zones, reserved_zones,
+		prefree_zones, zone_capacity_blocks);
 
 	info.blocks_per_seg = sbi->blocks_per_seg;
 	info.segs_per_sec = sbi->segs_per_sec;

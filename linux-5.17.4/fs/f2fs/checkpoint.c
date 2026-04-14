@@ -2673,23 +2673,53 @@ struct page *get_next_log_page(struct f2fs_sb_info *sbi, int log_type){
 	
 	if (log_type == SIT_LOG){
 		if (off >= NM_I(sbi)->nat_log_blkaddr){
+			f2fs_err(sbi,
+				"log_page_oob: type=SIT off=%lu sit_log=%u nat_log=%u sit_blks=%u",
+				off, SM_I(sbi)->sit_log_blkaddr,
+				NM_I(sbi)->nat_log_blkaddr,
+				SM_I(sbi)->sit_blks_in_log);
 			f2fs_bug_on(sbi, 1);
 			return NULL;
 		}
 
 	} else if (log_type == NAT_LOG) {
 		if (off >= SM_I(sbi)->sum_log_blkaddr){
+			f2fs_err(sbi,
+				"log_page_oob: type=NAT off=%lu nat_log=%u sum_log=%u nat_blks=%u cur_nat_log=%u",
+				off, NM_I(sbi)->nat_log_blkaddr,
+				SM_I(sbi)->sum_log_blkaddr,
+				NM_I(sbi)->nat_blks_in_log,
+#if DELAYED_MERGE
+				NM_I(sbi)->cur_nat_log
+#else
+				0
+#endif
+				);
 			f2fs_bug_on(sbi, 1);
 			return NULL;
 		}
 	} else if (log_type == SSA_LOG) {
 		if (off >= SM_I(sbi)->main_blkaddr) {
+			f2fs_err(sbi,
+				"log_page_oob: type=SSA off=%lu sum_log=%u main=%u sum_blks=%u cur_sum_log=%u",
+				off, SM_I(sbi)->sum_log_blkaddr,
+				SM_I(sbi)->main_blkaddr,
+				SM_I(sbi)->sum_blks_in_log,
+#if DELAYED_MERGE
+				SM_I(sbi)->cur_sum_log
+#else
+				0
+#endif
+				);
 			f2fs_bug_on(sbi, 1);
 			return NULL;
 		}
 	}
 
 	if (unlikely(off < SM_I(sbi)->sit_log_blkaddr)){
+		f2fs_err(sbi,
+			"log_page_oob: type=%d off=%lu sit_log=%u",
+			log_type, off, SM_I(sbi)->sit_log_blkaddr);
 		f2fs_bug_on(sbi, 1);
 		return NULL;
 	}

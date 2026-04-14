@@ -3353,9 +3353,14 @@ static int __flush_nat_entry_set(struct f2fs_sb_info *sbi,
 	if (!fg_merge) {
 		page = get_next_log_page(sbi, NAT_LOG);
 		if (!page){
-			printk("(%s : %d) error : failed to get next log page",
-					__func__, __LINE__);
-			f2fs_put_page(page, 1);
+			f2fs_err(sbi,
+				"nat_log: failed to get log page (cur_nat_log=%u nat_blks=%u)",
+#if DELAYED_MERGE
+				NM_I(sbi)->cur_nat_log,
+#else
+				0,
+#endif
+				NM_I(sbi)->nat_blks_in_log);
 			return -1;
 		} 	
 		if (IS_ERR(page))
@@ -3406,14 +3411,23 @@ static int __flush_nat_entry_set(struct f2fs_sb_info *sbi,
 				cpc->merge = cpc->merge | 0x2;
 				NM_I(sbi)->cur_nat_log ^= 0x1; 	// 切换log zone，反复用那两个log
 				NM_I(sbi)->nat_blks_in_log = 0; // 当前log中的entry数置为0
+				f2fs_info(sbi,
+					"nat_log: switch log zone, cur_nat_log=%u",
+					NM_I(sbi)->cur_nat_log);
 				printk("(%s:%d) nat merge done", __func__, __LINE__);
 			}
 
 				// allocate new log page
 				page = get_next_log_page(sbi, NAT_LOG);
 				if(!page){
-					printk("(%s : %d) error : failed to get next log page", __func__, __LINE__);
-					f2fs_put_page(page, 1);
+					f2fs_err(sbi,
+						"nat_log: failed to get log page (cur_nat_log=%u nat_blks=%u)",
+#if DELAYED_MERGE
+						NM_I(sbi)->cur_nat_log,
+#else
+						0,
+#endif
+						NM_I(sbi)->nat_blks_in_log);
 					return -1;
 				} 	
 				if (IS_ERR(page))
@@ -3473,6 +3487,9 @@ static int __flush_nat_entry_set(struct f2fs_sb_info *sbi,
 			// switch log tree;
 			NM_I(sbi)->cur_nat_log ^= 0x1;
 			NM_I(sbi)->nat_blks_in_log = 0;
+			f2fs_info(sbi,
+				"nat_log: switch log zone, cur_nat_log=%u",
+				NM_I(sbi)->cur_nat_log);
 			printk("(%s:%d) set nat merge flag", __func__, __LINE__);
 		}
 	} 
@@ -3513,6 +3530,9 @@ int f2fs_flush_nat_entries(struct f2fs_sb_info *sbi, struct cp_control *cpc)
 		cpc->merge = cpc->merge | 0x2;
 		NM_I(sbi)->cur_nat_log ^= 0x1;
 		NM_I(sbi)->nat_blks_in_log = 0;
+		f2fs_info(sbi,
+			"nat_log: force switch, cur_nat_log=%u",
+			NM_I(sbi)->cur_nat_log);
 		merge = true;
 	}
 #else
