@@ -3058,6 +3058,7 @@ static void new_curseg(struct f2fs_sb_info *sbi, int type, bool new_sec)
 	unsigned short seg_type = curseg->seg_type;
 	unsigned int segno = curseg->segno;
 	int dir = ALLOC_LEFT;
+	bool spin_ok = false;
 
 	f2fs_info(sbi, "new_curseg: enter type=%d seg_type=%u segno=%u next_segno=%u inited=%d sum_blk=%p curseg=%p curseg_array=%p",
 			type, seg_type, segno, curseg->next_segno, curseg->inited,
@@ -3071,9 +3072,12 @@ static void new_curseg(struct f2fs_sb_info *sbi, int type, bool new_sec)
 #if META_FOR_ZNS
 		insert_ssa_log(sbi, segno, curseg->sum_blk);
 #endif
-		// printk("(%s:%d) allocate newseg's sum page for segno: %u, type: %d, GET_SUM_BLOCK(sbi, segno):%u [by tt]", __func__, __LINE__, segno, type, GET_SUM_BLOCK(sbi, segno));
+		f2fs_info(sbi, "new_curseg: write_sum_page segno=%u type=%d sum_blkaddr=%u sum_blk=%p",
+				segno, type, GET_SUM_BLOCK(sbi, segno), curseg->sum_blk);
 		write_sum_page(sbi, curseg->sum_blk,
 				GET_SUM_BLOCK(sbi, segno));
+		f2fs_info(sbi, "new_curseg: write_sum_page done segno=%u type=%d",
+				segno, type);
 	}
 	if (seg_type == CURSEG_WARM_DATA || seg_type == CURSEG_COLD_DATA)
 		dir = ALLOC_RIGHT;
@@ -3081,15 +3085,27 @@ static void new_curseg(struct f2fs_sb_info *sbi, int type, bool new_sec)
 	if (test_opt(sbi, NOHEAP))
 		dir = ALLOC_RIGHT;
 
+	f2fs_info(sbi, "new_curseg: select seg dir=%d new_sec=%d seg_type=%u type=%d",
+			dir, new_sec, seg_type, type);
+
 	segno = __get_next_segno(sbi, type);
+	f2fs_info(sbi, "new_curseg: hint segno=%u type=%d", segno, type);
 	if (type == CURSEG_SPIN_WRITE_DATA) {
-		if (!get_new_segment_spin_write(sbi, &segno, new_sec, dir))
+		spin_ok = get_new_segment_spin_write(sbi, &segno, new_sec, dir);
+		f2fs_info(sbi, "new_curseg: spin_write pick=%d segno=%u", spin_ok, segno);
+		if (!spin_ok) {
 			get_new_segment(sbi, &segno, new_sec, dir);
+			f2fs_info(sbi, "new_curseg: spin_write fallback segno=%u", segno);
+		}
 	} else {
 		get_new_segment(sbi, &segno, new_sec, dir);
+		f2fs_info(sbi, "new_curseg: normal pick segno=%u", segno);
 	}
 	curseg->next_segno = segno;
+	f2fs_info(sbi, "new_curseg: set next_segno=%u type=%d", curseg->next_segno, type);
 	reset_curseg(sbi, type, 1);
+	f2fs_info(sbi, "new_curseg: reset done segno=%u zone=%u type=%d",
+			curseg->segno, curseg->zone, type);
 	curseg->alloc_type = LFS;
 	if (F2FS_OPTION(sbi).fs_mode == FS_MODE_FRAGMENT_BLK)
 		curseg->fragment_remained_chunk =
