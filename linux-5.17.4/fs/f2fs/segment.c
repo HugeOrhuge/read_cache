@@ -2991,6 +2991,11 @@ static void reset_curseg(struct f2fs_sb_info *sbi, int type, int modified)
 	struct summary_footer *sum_footer;
 	unsigned short seg_type = curseg->seg_type;
 
+	if (unlikely(!curseg->sum_blk))
+		f2fs_err(sbi, "reset_curseg: sum_blk=NULL type=%d segno=%u next_segno=%u inited=%d curseg=%p curseg_array=%p",
+			type, curseg->segno, curseg->next_segno, curseg->inited,
+			curseg, SM_I(sbi)->curseg_array);
+
 	curseg->inited = true;
 	curseg->segno = curseg->next_segno;
 	curseg->zone = GET_ZONE_FROM_SEG(sbi, curseg->segno);
@@ -3054,6 +3059,14 @@ static void new_curseg(struct f2fs_sb_info *sbi, int type, bool new_sec)
 	unsigned int segno = curseg->segno;
 	int dir = ALLOC_LEFT;
 
+	f2fs_info(sbi, "new_curseg: enter type=%d seg_type=%u segno=%u next_segno=%u inited=%d sum_blk=%p curseg=%p curseg_array=%p",
+			type, seg_type, segno, curseg->next_segno, curseg->inited,
+			curseg->sum_blk, curseg, SM_I(sbi)->curseg_array);
+
+	if (unlikely(!curseg->sum_blk))
+		f2fs_err(sbi, "new_curseg: sum_blk=NULL type=%d seg_type=%u segno=%u next_segno=%u inited=%d",
+			type, seg_type, segno, curseg->next_segno, curseg->inited);
+
 	if (curseg->inited){
 #if META_FOR_ZNS
 		insert_ssa_log(sbi, segno, curseg->sum_blk);
@@ -3081,6 +3094,10 @@ static void new_curseg(struct f2fs_sb_info *sbi, int type, bool new_sec)
 	if (F2FS_OPTION(sbi).fs_mode == FS_MODE_FRAGMENT_BLK)
 		curseg->fragment_remained_chunk =
 				prandom_u32() % sbi->max_fragment_chunk + 1;
+
+	f2fs_info(sbi, "new_curseg: exit type=%d segno=%u zone=%u next_segno=%u next_blkoff=%u",
+			type, curseg->segno, curseg->zone, curseg->next_segno,
+			curseg->next_blkoff);
 }
 #if STRIPE
 #if 0
