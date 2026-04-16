@@ -2576,10 +2576,17 @@ static void insert_ssa_log(struct f2fs_sb_info *sbi, unsigned int segno,
 	unsigned long long ckpt_ver;
 	struct radix_tree_root *root;
 #if DELAYED_MERGE
-	root = &SM_I(sbi)->ssa_log_root[SM_I(sbi)->cur_log_tree_idx];
+	unsigned int tree_idx = SM_I(sbi)->cur_log_tree_idx;
+#endif
+#if DELAYED_MERGE
+	root = &SM_I(sbi)->ssa_log_root[tree_idx];
 #else
 	root = &SM_I(sbi)->ssa_log_root;
 #endif
+
+	f2fs_info(sbi, "insert_ssa_log: enter segno=%u sum_blk=%p logged_sum=%u tree_entries=%u",
+			segno, sum_blk, SM_I(sbi)->logged_sum_blks,
+			SM_I(sbi)->sum_log_tree_entries);
 	
 	if (!root) {
 		f2fs_bug_on(sbi, 1);
@@ -2589,10 +2596,16 @@ static void insert_ssa_log(struct f2fs_sb_info *sbi, unsigned int segno,
 	if(!head){
 		head = f2fs_kmem_cache_alloc(ssa_set_slab,
 				GFP_NOFS, true, NULL);
+		if (!head) {
+			f2fs_err(sbi, "insert_ssa_log: alloc ssa_set failed segno=%u", segno);
+			return;
+		}
 		INIT_LIST_HEAD(&head->set_list);
 		head->segno = segno;
 		f2fs_radix_tree_insert(root, segno, head);
-//		printk("(%s : %d) tree insert", __func__, __LINE__);
+		f2fs_info(sbi, "insert_ssa_log: insert new set segno=%u", segno);
+	} else {
+		f2fs_info(sbi, "insert_ssa_log: update existing set segno=%u", segno);
 	}
 
 	memcpy(head->entries, sum_blk->entries, SUM_ENTRY_SIZE);
@@ -2604,8 +2617,9 @@ static void insert_ssa_log(struct f2fs_sb_info *sbi, unsigned int segno,
 
 	SM_I(sbi)->logged_sum_blks++;
 	SM_I(sbi)->sum_log_tree_entries++;
-	//printk("(%s : %d) insert ssa set of segno(%u)", 
-	//		__func__, __LINE__, segno);
+	f2fs_info(sbi, "insert_ssa_log: done segno=%u cp_ver=%llu logged_sum=%u tree_entries=%u",
+			segno, ckpt_ver, SM_I(sbi)->logged_sum_blks,
+			SM_I(sbi)->sum_log_tree_entries);
 }
 static inline void sum_blk_to_sum_log(struct f2fs_summary_block *sum_blk,
 			struct f2fs_sum_log_block *raw_sum_log){
@@ -3060,10 +3074,6 @@ static void new_curseg(struct f2fs_sb_info *sbi, int type, bool new_sec)
 	int dir = ALLOC_LEFT;
 	bool spin_ok = false;
 
-	f2fs_info(sbi, "new_curseg: enter type=%d seg_type=%u segno=%u next_segno=%u inited=%d sum_blk=%p curseg=%p curseg_array=%p",
-			type, seg_type, segno, curseg->next_segno, curseg->inited,
-			curseg->sum_blk, curseg, SM_I(sbi)->curseg_array);
-
 	if (unlikely(!curseg->sum_blk))
 		f2fs_err(sbi, "new_curseg: sum_blk=NULL type=%d seg_type=%u segno=%u next_segno=%u inited=%d",
 			type, seg_type, segno, curseg->next_segno, curseg->inited);
@@ -3072,12 +3082,10 @@ static void new_curseg(struct f2fs_sb_info *sbi, int type, bool new_sec)
 #if META_FOR_ZNS
 		insert_ssa_log(sbi, segno, curseg->sum_blk);
 #endif
-		f2fs_info(sbi, "new_curseg: write_sum_page segno=%u type=%d sum_blkaddr=%u sum_blk=%p",
-				segno, type, GET_SUM_BLOCK(sbi, segno), curseg->sum_blk);
+
 		write_sum_page(sbi, curseg->sum_blk,
 				GET_SUM_BLOCK(sbi, segno));
-		f2fs_info(sbi, "new_curseg: write_sum_page done segno=%u type=%d",
-				segno, type);
+
 	}
 	if (seg_type == CURSEG_WARM_DATA || seg_type == CURSEG_COLD_DATA)
 		dir = ALLOC_RIGHT;
@@ -3085,35 +3093,21 @@ static void new_curseg(struct f2fs_sb_info *sbi, int type, bool new_sec)
 	if (test_opt(sbi, NOHEAP))
 		dir = ALLOC_RIGHT;
 
-	f2fs_info(sbi, "new_curseg: select seg dir=%d new_sec=%d seg_type=%u type=%d",
-			dir, new_sec, seg_type, type);
-
 	segno = __get_next_segno(sbi, type);
-	f2fs_info(sbi, "new_curseg: hint segno=%u type=%d", segno, type);
 	if (type == CURSEG_SPIN_WRITE_DATA) {
 		spin_ok = get_new_segment_spin_write(sbi, &segno, new_sec, dir);
-		f2fs_info(sbi, "new_curseg: spin_write pick=%d segno=%u", spin_ok, segno);
 		if (!spin_ok) {
 			get_new_segment(sbi, &segno, new_sec, dir);
-			f2fs_info(sbi, "new_curseg: spin_write fallback segno=%u", segno);
 		}
 	} else {
 		get_new_segment(sbi, &segno, new_sec, dir);
-		f2fs_info(sbi, "new_curseg: normal pick segno=%u", segno);
 	}
 	curseg->next_segno = segno;
-	f2fs_info(sbi, "new_curseg: set next_segno=%u type=%d", curseg->next_segno, type);
 	reset_curseg(sbi, type, 1);
-	f2fs_info(sbi, "new_curseg: reset done segno=%u zone=%u type=%d",
-			curseg->segno, curseg->zone, type);
 	curseg->alloc_type = LFS;
 	if (F2FS_OPTION(sbi).fs_mode == FS_MODE_FRAGMENT_BLK)
 		curseg->fragment_remained_chunk =
 				prandom_u32() % sbi->max_fragment_chunk + 1;
-
-	f2fs_info(sbi, "new_curseg: exit type=%d segno=%u zone=%u next_segno=%u next_blkoff=%u",
-			type, curseg->segno, curseg->zone, curseg->next_segno,
-			curseg->next_blkoff);
 }
 #if STRIPE
 #if 0
