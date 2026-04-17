@@ -2583,10 +2583,6 @@ static void insert_ssa_log(struct f2fs_sb_info *sbi, unsigned int segno,
 #else
 	root = &SM_I(sbi)->ssa_log_root;
 #endif
-
-	f2fs_info(sbi, "insert_ssa_log: enter segno=%u sum_blk=%p logged_sum=%u tree_entries=%u",
-			segno, sum_blk, SM_I(sbi)->logged_sum_blks,
-			SM_I(sbi)->sum_log_tree_entries);
 	
 	if (!root) {
 		f2fs_bug_on(sbi, 1);
@@ -2603,9 +2599,6 @@ static void insert_ssa_log(struct f2fs_sb_info *sbi, unsigned int segno,
 		INIT_LIST_HEAD(&head->set_list);
 		head->segno = segno;
 		f2fs_radix_tree_insert(root, segno, head);
-		f2fs_info(sbi, "insert_ssa_log: insert new set segno=%u", segno);
-	} else {
-		f2fs_info(sbi, "insert_ssa_log: update existing set segno=%u", segno);
 	}
 
 	memcpy(head->entries, sum_blk->entries, SUM_ENTRY_SIZE);
@@ -2617,9 +2610,6 @@ static void insert_ssa_log(struct f2fs_sb_info *sbi, unsigned int segno,
 
 	SM_I(sbi)->logged_sum_blks++;
 	SM_I(sbi)->sum_log_tree_entries++;
-	f2fs_info(sbi, "insert_ssa_log: done segno=%u cp_ver=%llu logged_sum=%u tree_entries=%u",
-			segno, ckpt_ver, SM_I(sbi)->logged_sum_blks,
-			SM_I(sbi)->sum_log_tree_entries);
 }
 static inline void sum_blk_to_sum_log(struct f2fs_summary_block *sum_blk,
 			struct f2fs_sum_log_block *raw_sum_log){
@@ -3081,10 +3071,7 @@ static void new_curseg(struct f2fs_sb_info *sbi, int type, bool new_sec)
 	if (curseg->inited){
 #if META_FOR_ZNS
 		insert_ssa_log(sbi, segno, curseg->sum_blk);
-		f2fs_info(sbi, "insert ssa log end");
 #endif
-		f2fs_info(sbi, "new_curseg: write_sum_page segno=%u type=%d sum_blkaddr=%u sum_blk=%p",
-				segno, type, GET_SUM_BLOCK(sbi, segno), curseg->sum_blk);
 		write_sum_page(sbi, curseg->sum_blk,
 				GET_SUM_BLOCK(sbi, segno));
 
