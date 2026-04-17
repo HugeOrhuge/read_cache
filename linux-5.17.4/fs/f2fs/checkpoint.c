@@ -2646,9 +2646,9 @@ inline pgoff_t next_log_addr(struct f2fs_sb_info *sbi, int log_type){
 		off_in_zone = SM_I(sbi)->sum_blks_in_log / stripe_cnt;
 		stripe_idx = SM_I(sbi)->sum_blks_in_log % stripe_cnt;
 
-		log_addr = SM_I(sbi)->sum_log_blkaddr + stripe_idx * sbi->blocks_per_blkz;
+		log_addr = SM_I(sbi)->ssa_log_blkaddr + stripe_idx * sbi->blocks_per_blkz;
 		log_addr += off_in_zone;
-//		log_addr = SM_I(sbi)->sum_log_blkaddr + SM_I(sbi)->sum_blks_in_log;
+//		log_addr = SM_I(sbi)->ssa_log_blkaddr + SM_I(sbi)->sum_blks_in_log;
 		SM_I(sbi)->sum_blks_in_log++;
 #if DELAYED_MERGE
 		log_addr = log_addr + SM_I(sbi)->cur_sum_log * stripe_cnt * sbi->blocks_per_blkz;
@@ -2683,11 +2683,11 @@ struct page *get_next_log_page(struct f2fs_sb_info *sbi, int log_type){
 		}
 
 	} else if (log_type == NAT_LOG) {
-		if (off >= SM_I(sbi)->sum_log_blkaddr){
+		if (off >= SM_I(sbi)->ssa_log_blkaddr){
 			f2fs_err(sbi,
 				"log_page_oob: type=NAT off=%lu nat_log=%u sum_log=%u nat_blks=%u cur_nat_log=%u",
 				off, NM_I(sbi)->nat_log_blkaddr,
-				SM_I(sbi)->sum_log_blkaddr,
+				SM_I(sbi)->ssa_log_blkaddr,
 				NM_I(sbi)->nat_blks_in_log,
 #if DELAYED_MERGE
 				NM_I(sbi)->cur_nat_log
@@ -2701,7 +2701,7 @@ struct page *get_next_log_page(struct f2fs_sb_info *sbi, int log_type){
 	} else if (log_type == SSA_LOG) {
 		if (off >= SM_I(sbi)->main_blkaddr) {
 			f2fs_err(sbi,
-				"log_page_oob: type=SSA off=%lu sum_log=%u main=%u sum_blks=%u cur_sum_log=%u",
+				"log_page_oob: type=SSA off=%lu ssa_log=%u main=%u sum_blks=%u cur_ssa_log=%u",
 				off, SM_I(sbi)->sum_log_blkaddr,
 				SM_I(sbi)->main_blkaddr,
 				SM_I(sbi)->sum_blks_in_log,
@@ -2885,7 +2885,7 @@ int reset_meta_zone_towrite(struct f2fs_sb_info *sbi,
 			log = 1;
 			break;
 		case SSA_LOG:
-			base = SM_I(sbi)->sum_log_blkaddr;
+			base = SM_I(sbi)->ssa_log_blkaddr;
 			log = 1;
 			break;
 		case SIT:

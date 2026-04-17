@@ -3081,8 +3081,10 @@ static void new_curseg(struct f2fs_sb_info *sbi, int type, bool new_sec)
 	if (curseg->inited){
 #if META_FOR_ZNS
 		insert_ssa_log(sbi, segno, curseg->sum_blk);
+		f2fs_info(sbi, "insert ssa log end");
 #endif
-
+		f2fs_info(sbi, "new_curseg: write_sum_page segno=%u type=%d sum_blkaddr=%u sum_blk=%p",
+				segno, type, GET_SUM_BLOCK(sbi, segno), curseg->sum_blk);
 		write_sum_page(sbi, curseg->sum_blk,
 				GET_SUM_BLOCK(sbi, segno));
 
@@ -5272,7 +5274,7 @@ continue_unlock:
 /*
         if (0) {
           blkdev_zone_mgmt(FDEV(0).bdev, REQ_OP_ZONE_FINISH, 
-              SECTOR_FROM_BLOCK(sm_i->sum_log_blkaddr + sm_i->cur_sum_log * sbi->blocks_per_blkz), 
+              SECTOR_FROM_BLOCK(sm_i->ssa_log_blkaddr + sm_i->cur_sum_log * sbi->blocks_per_blkz), 
               SECTOR_FROM_BLOCK(sbi->blocks_per_blkz), GFP_NOFS);
         }
 */
@@ -7044,20 +7046,15 @@ int f2fs_check_write_pointer(struct f2fs_sb_info *sbi)
 {
 	int i, ret;
 	struct check_zone_write_pointer_args args;
-	pr_info("[f2fs_check_write_pointer]: ttt111\n");
 
-	pr_info("[f2fs_check_write_pointer]: sbi->s_ndevs: %d, ttt222\n", sbi->s_ndevs);
 
 	for (i = 0; i < sbi->s_ndevs; i++) {
 		if (!bdev_is_zoned(FDEV(i).bdev)) 
 			continue;
-		pr_info("[f2fs_check_write_pointer]: ttt333\n");
 		
 		args.sbi = sbi;
-		pr_info("[f2fs_check_write_pointer]: ttt444\n");
 
 		args.fdev = &FDEV(i);
-		pr_info("[f2fs_check_write_pointer]: FDEV(i).nr_blkz: %u, FDEV(i).total_segments: %u, ttt555\n", FDEV(i).nr_blkz, FDEV(i).total_segments);
 
 		ret = blkdev_report_zones(FDEV(i).bdev, 0, BLK_ALL_ZONES,
 					  check_zone_write_pointer_cb, &args);
@@ -7481,7 +7478,7 @@ int f2fs_build_segment_manager(struct f2fs_sb_info *sbi)
 	sm_info->ssa_blkaddr = le32_to_cpu(raw_super->ssa_blkaddr);
 #if META_FOR_ZNS
 	sm_info->sit_log_blkaddr = le32_to_cpu(raw_super->sit_log_blkaddr);
-	sm_info->sum_log_blkaddr = le32_to_cpu(raw_super->sum_log_blkaddr);
+	sm_info->ssa_log_blkaddr = le32_to_cpu(raw_super->ssa_log_blkaddr);
 	sm_info->logged_sum_blks = 0;
 	sm_info->sum_log_tree_entries = 0;
 

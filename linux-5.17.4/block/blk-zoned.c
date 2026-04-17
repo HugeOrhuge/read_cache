@@ -155,12 +155,9 @@ EXPORT_SYMBOL_GPL(blkdev_nr_zones);
 int blkdev_report_zones(struct block_device *bdev, sector_t sector,
 			unsigned int nr_zones, report_zones_cb cb, void *data)
 {
-	pr_info("[blkdev_report_zones: ttt111\n]");
 	struct gendisk *disk = bdev->bd_disk;
-	pr_info("[blkdev_report_zones: ttt222\n]");
 	sector_t capacity = get_capacity(disk);
 
-	/* 添加调试信息：检查基本参数 */
 	pr_info("blkdev_report_zones: bdev=%px, sector=%llu, nr_zones=%u, cb=%px, data=%px\n",
 		 bdev, (unsigned long long)sector, nr_zones, cb, data);
 	pr_info("  disk=%px, disk_name=%s, capacity=%llu\n",
@@ -184,7 +181,6 @@ int blkdev_report_zones(struct block_device *bdev, sector_t sector,
 		return 0;
 	}
 
-	/* 添加调试信息：检查 report_zones 函数指针 */
 	pr_info("  Calling disk->fops->report_zones (%px)\n", disk->fops->report_zones);
 
 	int ret = disk->fops->report_zones(disk, sector, nr_zones, cb, data);

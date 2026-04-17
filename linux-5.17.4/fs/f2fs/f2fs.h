@@ -1116,7 +1116,7 @@ struct f2fs_sm_info {
 	int cur_sit_log;			/* sit log set number of latest version  */
 
 	/* for SSA */
-	block_t sum_log_blkaddr;	/*start block address of SSA log area */
+	block_t ssa_log_blkaddr;	/*start block address of SSA log area */
 	int sum_blks_in_log; 		/* numbers of sum blocks written in current log zone */
 	int cur_sum_log; 			/* sum log set number of latest version */
 
@@ -4737,8 +4737,7 @@ static inline bool has_curlog_space(struct f2fs_sb_info *sbi,
 		return true;
 	}
 	// consider all zone size is equal
-	log_size = log_size(sbi);
-	log_size = min(log_size, meta_blks_zone_cap(sbi));
+	log_size = meta_blks_zone_cap(sbi);
 #if META_LOG_STRIPE
   if (type == SSA_LOG) {
     log_size *= META_STRIPE_CNT;

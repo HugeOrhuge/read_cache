@@ -87,7 +87,10 @@ static inline void sanity_check_seg_type(struct f2fs_sb_info *sbi,
 		le32_to_cpu(F2FS_RAW_SUPER(sbi)->segment_count))
 #define TOTAL_BLKS(sbi)	(TOTAL_SEGS(sbi) << (sbi)->log_blocks_per_seg)
 
-#define MAX_BLKADDR(sbi)	(SEG0_BLKADDR(sbi) + TOTAL_BLKS(sbi))
+#define MAX_BLKADDR(sbi)	\
+	(SEG0_BLKADDR(sbi) +     \
+	(le32_to_cpu(F2FS_RAW_SUPER(sbi)->segment_count) << (sbi)->log_blocks_per_seg))
+
 #define SEGMENT_SIZE(sbi)	(1ULL << ((sbi)->log_blocksize +	\
 					(sbi)->log_blocks_per_seg))
 

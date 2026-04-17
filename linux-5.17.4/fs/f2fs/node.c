@@ -679,7 +679,7 @@ retry:
 				//printk("debug : get ni::nid(%u),ino(%u),blk_addr(%u)",
 				//		nid, ni->ino, ni->blk_addr);
 				up_read(&nm_i->nat_tree_lock);
-	      up_read(&nm_i->nat_ltree_slock);
+	      		up_read(&nm_i->nat_ltree_slock);
 				//unlock cache tree;
 				raw_nat_from_node_info(&ne, ni);
 				goto cache;
@@ -3562,9 +3562,11 @@ int f2fs_flush_nat_entries(struct f2fs_sb_info *sbi, struct cp_control *cpc)
 
 	up_write(&nm_i->nat_tree_lock);
 	/* Allow dirty nats by node block allocation in write_begin */
-	if(fg_merge)
+	if(fg_merge) {
+		down_read(&NM_I(sbi)->nat_ltree_slock);	
 		err = merge_nat(sbi, 1);
-
+		up_read(&NM_I(sbi)->nat_ltree_slock);
+	}
 	f2fs_submit_merged_write(sbi, META);
 
 	return err;
@@ -3721,9 +3723,11 @@ int f2fs_flush_nat_entries(struct f2fs_sb_info *sbi, struct cp_control *cpc)
 
 	up_write(&nm_i->nat_tree_lock);
 	/* Allow dirty nats by node block allocation in write_begin */
-	if(merge)
+	if(merge) {
+		down_read(&NM_I(sbi)->nat_ltree_slock);
 		err = merge_nat(sbi);
-
+		up_read(&NM_I(sbi)->nat_ltree_slock);
+	}
 	f2fs_submit_merged_write(sbi, META);
 
 	return err;
