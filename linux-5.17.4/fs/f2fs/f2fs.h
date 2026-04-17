@@ -125,6 +125,11 @@ extern const char *f2fs_fault_name[FAULT_MAX];
 #define	F2FS_MOUNT_GC_MERGE		0x20000000
 #define F2FS_MOUNT_COMPRESS_CACHE	0x40000000
 
+#define F2FS_STREAM_ID_DEFAULT		0
+#define F2FS_STREAM_ID_SPIN_WRITE	1
+#define F2FS_STREAM_ID_MAX		255
+#define F2FS_SPIN_WRITE_MAX_ZONES	48
+
 #define F2FS_OPTION(sbi)	((sbi)->mount_opt)
 #define clear_opt(sbi, option)	(F2FS_OPTION(sbi).opt &= ~F2FS_MOUNT_##option)
 #define set_opt(sbi, option)	(F2FS_OPTION(sbi).opt |= F2FS_MOUNT_##option)
@@ -174,6 +179,8 @@ struct f2fs_mount_info {
 	block_t unusable_cap;		/* Amount of space allowed to be
 					 * unusable when disabling checkpoint
 					 */
+	unsigned int spin_write_zones;	/* reserved zones for spin_write */
+	bool spin_write_zones_set;	/* whether option is explicitly set */
 
 	/* For compression */
 	unsigned char compress_algorithm;	/* algorithm type */
@@ -836,6 +843,16 @@ struct f2fs_inode_info {
 	unsigned char i_compress_level;		/* compress level (lz4hc,zstd) */
 	unsigned short i_compress_flag;		/* compress flag */
 	unsigned int i_cluster_size;		/* cluster size */
+	u16 i_stream_id;			/* per-inode stream id */
+	bool i_stream_cached;			/* stream id cached flag */
+};
+
+struct f2fs_stream_zone_pool {
+	unsigned int max_zones;		/* max zones for stream */
+	unsigned int used_zones;		/* zones currently assigned */
+	unsigned int total_zones;		/* total zones in main area */
+	unsigned long *zone_map;		/* bitmap of assigned zones */
+	spinlock_t lock;			/* protects zone_map/used_zones */
 };
 
 static inline void get_extent_info(struct extent_info *ext,
@@ -1037,7 +1054,7 @@ static inline void set_new_dnode(struct dnode_of_data *dn, struct inode *inode,
  */
 #define	NR_CURSEG_DATA_TYPE	(3)
 #define NR_CURSEG_NODE_TYPE	(3)
-#define NR_CURSEG_INMEM_TYPE	(2)
+#define NR_CURSEG_INMEM_TYPE	(3)
 #define NR_CURSEG_RO_TYPE	(2)
 #define NR_CURSEG_PERSIST_TYPE	(NR_CURSEG_DATA_TYPE + NR_CURSEG_NODE_TYPE)
 #define NR_CURSEG_TYPE		(NR_CURSEG_INMEM_TYPE + NR_CURSEG_PERSIST_TYPE)
@@ -1052,6 +1069,7 @@ enum {
 	NR_PERSISTENT_LOG,	/* number of persistent log */
 	CURSEG_COLD_DATA_PINNED = NR_PERSISTENT_LOG,
 				/* pinned file that needs consecutive block address */
+	CURSEG_SPIN_WRITE_DATA,	/* dedicated data stream for spin_write */
 #if IGZO
   CURSEG_NOT_ALLOC = NR_PERSISTENT_LOG,
 #endif
@@ -1082,6 +1100,8 @@ struct f2fs_sm_info {
 	struct dirty_seglist_info *dirty_info;	/* dirty segment information */
 	struct curseg_info *curseg_array;	/* active segment information */
 
+	struct f2fs_stream_zone_pool spin_write_pool;
+
 	struct rw_semaphore curseg_lock;	/* for preventing curseg change */
 
 	block_t seg0_blkaddr;		/* block address of 0'th segment */
@@ -1096,7 +1116,7 @@ struct f2fs_sm_info {
 	int cur_sit_log;			/* sit log set number of latest version  */
 
 	/* for SSA */
-	block_t sum_log_blkaddr;	/*start block address of SSA log area */
+	block_t ssa_log_blkaddr;	/*start block address of SSA log area */
 	int sum_blks_in_log; 		/* numbers of sum blocks written in current log zone */
 	int cur_sum_log; 			/* sum log set number of latest version */
 
@@ -3862,6 +3882,8 @@ int f2fs_do_write_data_page(struct f2fs_io_info *fio);
 void f2fs_do_map_lock(struct f2fs_sb_info *sbi, int flag, bool lock);
 int f2fs_map_blocks(struct inode *inode, struct f2fs_map_blocks *map,
 			int create, int flag);
+int f2fs_get_stream_id(struct inode *inode, u16 *id);
+int f2fs_set_stream_id(struct inode *inode, u16 id);
 int f2fs_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 			u64 start, u64 len);
 int f2fs_encrypt_one_page(struct f2fs_io_info *fio);
@@ -4715,8 +4737,7 @@ static inline bool has_curlog_space(struct f2fs_sb_info *sbi,
 		return true;
 	}
 	// consider all zone size is equal
-	log_size = log_size(sbi);
-	log_size = min(log_size, meta_blks_zone_cap(sbi));
+	log_size = meta_blks_zone_cap(sbi);
 #if META_LOG_STRIPE
   if (type == SSA_LOG) {
     log_size *= META_STRIPE_CNT;
