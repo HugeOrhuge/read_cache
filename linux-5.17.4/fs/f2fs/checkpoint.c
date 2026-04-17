@@ -2702,7 +2702,7 @@ struct page *get_next_log_page(struct f2fs_sb_info *sbi, int log_type){
 		if (off >= SM_I(sbi)->main_blkaddr) {
 			f2fs_err(sbi,
 				"log_page_oob: type=SSA off=%lu ssa_log=%u main=%u sum_blks=%u cur_ssa_log=%u",
-				off, SM_I(sbi)->sum_log_blkaddr,
+				off, SM_I(sbi)->ssa_log_blkaddr,
 				SM_I(sbi)->main_blkaddr,
 				SM_I(sbi)->sum_blks_in_log,
 #if DELAYED_MERGE
