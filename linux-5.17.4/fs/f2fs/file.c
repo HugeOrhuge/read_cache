@@ -3903,6 +3903,7 @@ static int f2fs_sec_trim_file(struct file *filp, unsigned long arg)
 	loff_t end_addr;
 	bool to_end = false;
 	int ret = 0;
+	int di = 0;
 
 	if (!(filp->f_mode & FMODE_WRITE))
 		return -EBADF;
@@ -3996,7 +3997,6 @@ static int f2fs_sec_trim_file(struct file *filp, unsigned long arg)
 				goto out;
 			}
 
-			int di = 0;
 			cur_bdev = f2fs_target_device(sbi, blkaddr, NULL);
 			if (f2fs_is_multi_device(sbi)) {
 				// int di = f2fs_target_device_index(sbi, blkaddr);
