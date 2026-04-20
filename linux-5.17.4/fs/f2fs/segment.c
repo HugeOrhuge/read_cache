@@ -5191,6 +5191,32 @@ static void add_sits_in_set(struct f2fs_sb_info *sbi)
 
 #if META_FOR_ZNS
 #if DELAYED_MERGE
+static void f2fs_log_sum_blk_write(struct f2fs_sb_info *sbi, block_t blkaddr,
+				 unsigned int segno)
+{
+	static block_t last_blkaddr;
+	static unsigned int repeat_cnt;
+	bool is_zone_last;
+
+	if (!sbi || !sbi->blocks_per_blkz)
+		return;
+
+	is_zone_last = (blkaddr % sbi->blocks_per_blkz) ==
+			(sbi->blocks_per_blkz - 1);
+	if (blkaddr == last_blkaddr)
+		repeat_cnt++;
+	else {
+		last_blkaddr = blkaddr;
+		repeat_cnt = 0;
+	}
+
+	if (is_zone_last || repeat_cnt) {
+		f2fs_info(sbi,
+			"ssa write: blkaddr=%u segno=%u zone_last=%d repeat=%u",
+			blkaddr, segno, is_zone_last, repeat_cnt);
+	}
+}
+
 int __flush_sum_blks(struct f2fs_sb_info *sbi){
 	struct f2fs_sm_info *sm_i = SM_I(sbi);
 	struct address_space *mapping = META_MAPPING(sbi);
@@ -5239,6 +5265,8 @@ continue_unlock:
 			}
 
 #if !NAIVE_MFZ
+			f2fs_log_sum_blk_write(sbi, page->index,
+					GET_SEGNO_FROM_SUM_ADDR(sbi, page->index));
 			if(write_sum_log_page(sbi, GET_SEGNO_FROM_SUM_ADDR(sbi, page->index),
 						page_address(page)))
 			{
@@ -5372,6 +5400,8 @@ continue_unlock:
 			}
 			
 			if(!merge) {
+				f2fs_log_sum_blk_write(sbi, page->index,
+						GET_SEGNO_FROM_SUM_ADDR(sbi, page->index));
 				if(write_sum_log_page(sbi, GET_SEGNO_FROM_SUM_ADDR(sbi, page->index),
 							page_address(page))) 
 				{

@@ -1277,13 +1277,9 @@ static inline unsigned int get_sum_block_addr(struct f2fs_sb_info *sbi,
 
   // 判断是否是section中的最后一个segment，如果是最后一个segment，它的block数量跟其他segment不一样
   if (IS_LAST_SEG(sbi, segno)) {
-	f2fs_info(sbi, "last seg in sec: segno=%u, secno=%u", segno, secno);
     dev_idx = f2fs_get_first_zns_index(sbi);
-	f2fs_info(sbi, "dev_idx=%u, zone_capacity_blocks[0]=%u", dev_idx, FDEV(dev_idx).zone_capacity_blocks[0]);
     viraddr = FDEV(dev_idx).zone_capacity_blocks[0];
-	f2fs_info(sbi, "viraddr=%u,capacity_blocks[0]=%u", viraddr, FDEV(dev_idx).zone_capacity_blocks[0]);
     viraddr *= SM_I(sbi)->grid_cnt;
-	f2fs_info(sbi, "viraddr=%u, grid_cnt=%u", viraddr, SM_I(sbi)->grid_cnt);
     viraddr -= 1; // 如果是最后一个segment，则segment summary block取最后一个block的地址
   } else {
 	// SEG_TO_VIRADDR(sbi, segno + 1)计算下一个segment在所在segment的起始block地址，减1即为当前segment的summary block地址
