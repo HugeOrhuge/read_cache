@@ -1279,8 +1279,8 @@ static inline unsigned int get_sum_block_addr(struct f2fs_sb_info *sbi,
   if (IS_LAST_SEG(sbi, segno)) {
     dev_idx = f2fs_get_first_zns_index(sbi);
 	if (!FDEV(dev_idx).zone_capacity_blocks) {
-		f2fs_info(sbi, "last segno in sec: %u, secno: %u, viraddr: %u", segno, secno, viraddr);
 		viraddr = sbi->blocks_per_blkz;
+		f2fs_info(sbi, "last segno in sec: %u, secno: %u, viraddr: %u", segno, secno, viraddr);
 	} else {
     	viraddr = FDEV(dev_idx).zone_capacity_blocks[0];
 	}
