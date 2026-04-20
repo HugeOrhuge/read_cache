@@ -1280,12 +1280,13 @@ static inline unsigned int get_sum_block_addr(struct f2fs_sb_info *sbi,
     dev_idx = f2fs_get_first_zns_index(sbi);
 	if (!FDEV(dev_idx).zone_capacity_blocks) {
 		viraddr = sbi->blocks_per_blkz;
-		f2fs_info(sbi, "last segno in sec: %u, secno: %u, viraddr: %u", segno, secno, viraddr);
 	} else {
     	viraddr = FDEV(dev_idx).zone_capacity_blocks[0];
 	}
     viraddr *= SM_I(sbi)->grid_cnt;
     viraddr -= 1; // 如果是最后一个segment，则segment summary block取最后一个block的地址
+	f2fs_info(sbi, "last segno in sec: %u, secno: %u, viraddr: %u, blkaddr: %u",
+		 segno, secno, viraddr, virt_to_logical_from_block0(sbi, viraddr, secno));
   } else {
 	// SEG_TO_VIRADDR(sbi, segno + 1)计算下一个segment在所在segment的起始block地址，减1即为当前segment的summary block地址
     viraddr = SEG_TO_VIRADDR(sbi, segno + 1) - 1;
