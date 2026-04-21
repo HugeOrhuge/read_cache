@@ -53,7 +53,7 @@ int packed_zone_should_flush(const struct packed_zone *pz);
 /* 释放 packed_zone 中的所有文件数据。 */
 void packed_zone_free(struct packed_zone *pz);
 /* 将 packed zone 写入新分配的 read_id 目录。 */
-int packed_zone_flush(struct packed_zone *pz);
+int packed_zone_flush(struct packed_zone *pz, char *out_dir, size_t out_len);
 /* 查询缓存文件，命中则返回打开的 fd。 */
 int read_cache_query(const char *file_path);
 

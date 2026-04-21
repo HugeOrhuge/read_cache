@@ -64,6 +64,7 @@ int read_cache_init(uint64_t read_id_size_bytes)
 
 static int read_cache_fs_fd = -1;
 static size_t packed_zone_threshold_bytes = READ_CACHE_DEFAULT_PACKED_ZONE_BYTES;
+#define READ_CACHE_CURSEG_WARM_DATA 1
 
 struct read_cache_queue_item {
 	char *path;
@@ -78,6 +79,8 @@ static LIST_HEAD(read_cache_queue);
 static struct packed_zone read_cache_packed_zone;
 static bool read_cache_worker_running;
 static bool read_cache_worker_stop;
+
+static void read_cache_pad_cur_zone(const char *read_id_dir);
 
 static void packed_zone_init_if_needed(struct packed_zone *pz)
 {
@@ -152,10 +155,10 @@ static void read_cache_queue_clear(void)
 
 static void *read_cache_worker_main(void *unused)
 {
-	(void)unused;
-
-	for (;;) {
+	while (1) {
 		struct read_cache_queue_item *item = NULL;
+		struct stat st;
+		char flushed_dir[PATH_MAX];
 		int ret;
 
 		pthread_mutex_lock(&read_cache_queue_lock);
@@ -171,6 +174,27 @@ static void *read_cache_worker_main(void *unused)
 		if (!item)
 			continue;
 
+		flushed_dir[0] = '\0';
+		if (!fstat(item->fd, &st) && S_ISREG(st.st_mode) && st.st_size >= 0) {
+			uint64_t size = (uint64_t)st.st_size;
+			uint64_t projected = read_cache_packed_zone.total_bytes + size;
+
+			if (read_cache_packed_zone.total_bytes &&
+			    projected >= packed_zone_threshold_bytes) {
+				ret = packed_zone_flush(&read_cache_packed_zone,
+							  flushed_dir, sizeof(flushed_dir));
+				if (!ret) {
+					packed_zone_free(&read_cache_packed_zone);
+					read_cache_pad_cur_zone(flushed_dir);
+				} else {
+					close(item->fd);
+					free(item->path);
+					free(item);
+					continue;
+				}
+			}
+		}
+
 		ret = packed_zone_add_file_from_fd(&read_cache_packed_zone,
 						    item->path, item->fd);
 		close(item->fd);
@@ -179,11 +203,6 @@ static void *read_cache_worker_main(void *unused)
 
 		if (ret)
 			continue;
-
-		if (packed_zone_should_flush(&read_cache_packed_zone) > 0) {
-			if (!packed_zone_flush(&read_cache_packed_zone))
-				packed_zone_free(&read_cache_packed_zone);
-		}
 	}
 
 	return NULL;
@@ -560,8 +579,74 @@ out:
 	return ret;
 }
 
+static int read_cache_write_zeros(const char *path, size_t size)
+{
+	int fd;
+	static char zeros[4096];
+	int ret;
+
+	if (!size)
+		return 0;
+
+	ret = read_cache_ensure_parent_dirs(path, 0755);
+	if (ret)
+		return ret;
+
+	fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+	if (fd < 0)
+		return -errno;
+
+	while (size) {
+		size_t chunk = sizeof(zeros);
+		ssize_t written;
+
+		if (chunk > size)
+			chunk = size;
+
+		written = write(fd, zeros, chunk);
+		if (written < 0) {
+			if (errno == EINTR)
+				continue;
+			ret = -errno;
+			goto out;
+		}
+		size -= (size_t)written;
+	}
+
+	ret = 0;
+out:
+	close(fd);
+	return ret;
+}
+
+static void read_cache_pad_cur_zone(const char *read_id_dir)
+{
+	struct f2fs_cursec_free_info info = { 0 };
+	char pad_path[PATH_MAX];
+	size_t pad_bytes;
+
+	if (!read_id_dir || !read_id_dir[0])
+		return;
+	if (read_cache_fs_fd < 0)
+		return;
+
+	info.curseg_type = READ_CACHE_CURSEG_WARM_DATA;
+	if (ioctl(read_cache_fs_fd, F2FS_IOC_GET_CURSEC_FREE_BLOCKS, &info))
+		return;
+
+	pad_bytes = (size_t)info.free_blocks * READ_CACHE_BLOCK_SIZE;
+	if (!pad_bytes)
+		return;
+
+	if (snprintf(pad_path, sizeof(pad_path), "%s/.pad", read_id_dir)
+	    >= (int)sizeof(pad_path))
+		return;
+
+	read_cache_write_zeros(pad_path, pad_bytes);
+}
+
 /* 将 packed zone 写入新的 read_id 目录。 */
-int packed_zone_flush(struct packed_zone *pz)
+int packed_zone_flush(struct packed_zone *pz, char *out_dir, size_t out_len)
 {
 	struct packed_file *file;
 	struct list_head *pos;
@@ -615,6 +700,12 @@ int packed_zone_flush(struct packed_zone *pz)
 	ret = read_cache_mkdir_p(read_id_dir, 0755);
 	if (ret)
 		return ret;
+
+	if (out_dir && out_len) {
+		int copied = snprintf(out_dir, out_len, "%s", read_id_dir);
+		if (copied < 0 || (size_t)copied >= out_len)
+			return -ENAMETOOLONG;
+	}
 
 	/* 重置该 read_id 的布隆过滤器位图。 */
 	bloom_filter_reset_read_id(read_id);
