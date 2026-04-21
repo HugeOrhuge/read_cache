@@ -13,9 +13,13 @@
 #include <errno.h>
 #include <sys/ioctl.h>
 
-#include <linux/f2fs.h>
+#include <f2fs.h>
 
 #include "read_cache.h"
+
+static int read_cache_fs_fd = -1;
+static size_t packed_zone_threshold_bytes = READ_CACHE_DEFAULT_PACKED_ZONE_BYTES;
+#define READ_CACHE_CURSEG_WARM_DATA 1
 
 /* 初始化热度表和布隆过滤器子系统。 */
 int read_cache_init(uint64_t read_id_size_bytes)
@@ -61,10 +65,6 @@ int read_cache_init(uint64_t read_id_size_bytes)
 	return bloom_filter_init(max_ids, BLOOM_FILTER_BYTES,
 				  BLOOM_FILTER_HASHES);
 }
-
-static int read_cache_fs_fd = -1;
-static size_t packed_zone_threshold_bytes = READ_CACHE_DEFAULT_PACKED_ZONE_BYTES;
-#define READ_CACHE_CURSEG_WARM_DATA 1
 
 struct read_cache_queue_item {
 	char *path;
