@@ -3152,6 +3152,58 @@ static int f2fs_ioc_get_free_zones(struct file *filp, unsigned long arg)
 	return 0;
 }
 
+static int f2fs_ioc_get_cursec_free_blocks(struct file *filp, unsigned long arg)
+{
+	struct f2fs_sb_info *sbi = F2FS_I_SB(file_inode(filp));
+	struct f2fs_cursec_free_info info;
+	struct curseg_info *curseg;
+	unsigned int segno;
+	unsigned int secno;
+	unsigned int last_segno;
+	unsigned int usable_segs;
+	unsigned int usable_blks;
+	u64 free_blocks = 0;
+	unsigned int i;
+
+	if (copy_from_user(&info, (struct f2fs_cursec_free_info __user *)arg,
+			 sizeof(info)))
+		return -EFAULT;
+
+	if (info.curseg_type >= NR_CURSEG_TYPE)
+		return -EINVAL;
+
+	down_read(&SM_I(sbi)->curseg_lock);
+	curseg = CURSEG_I(sbi, info.curseg_type);
+	segno = curseg->segno;
+	secno = GET_SEC_FROM_SEG(sbi, segno);
+	usable_segs = f2fs_usable_segs_in_sec(sbi, segno);
+	if (!usable_segs) {
+		up_read(&SM_I(sbi)->curseg_lock);
+		return -EINVAL;
+	}
+	last_segno = secno * sbi->segs_per_sec + usable_segs - 1;
+
+	usable_blks = f2fs_usable_blks_in_seg(sbi, segno);
+	if (curseg->next_blkoff < usable_blks)
+		free_blocks += usable_blks - curseg->next_blkoff;
+
+	for (i = segno + 1; i <= last_segno; i++)
+		free_blocks += f2fs_usable_blks_in_seg(sbi, i);
+
+	info.cursec = secno;
+	info.curseg = segno;
+	info.next_blkoff = curseg->next_blkoff;
+	info.usable_segs_in_sec = usable_segs;
+	info.free_blocks = free_blocks;
+	up_read(&SM_I(sbi)->curseg_lock);
+
+	if (copy_to_user((struct f2fs_cursec_free_info __user *)arg, &info,
+			 sizeof(info)))
+		return -EFAULT;
+
+	return 0;
+}
+
 #ifdef CONFIG_QUOTA
 int f2fs_transfer_project_quota(struct inode *inode, kprojid_t kprojid)
 {
@@ -4397,6 +4449,8 @@ static long __f2fs_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		return f2fs_ioc_compress_file(filp, arg);
 	case F2FS_IOC_GET_FREE_ZONES:
 		return f2fs_ioc_get_free_zones(filp, arg);
+	case F2FS_IOC_GET_CURSEC_FREE_BLOCKS:
+		return f2fs_ioc_get_cursec_free_blocks(filp, arg);
 	case F2FS_IOC_SET_STREAM_ID:
 		return f2fs_ioc_set_stream_id(filp, arg);
 	case F2FS_IOC_GET_STREAM_ID:

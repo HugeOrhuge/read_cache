@@ -4271,17 +4271,17 @@ static int f2fs_scan_devices(struct f2fs_sb_info *sbi)
 				blkdev_get_by_dev(sbi->sb->s_bdev->bd_dev,
 					sbi->sb->s_mode, sbi->sb->s_type);
 			
-			pr_info("[f2fs_scan_devices]: Single zoned block device mount. device%d: total_segments=%u ---ttt111g\n", i, FDEV(i).total_segments);
+			// pr_info("[f2fs_scan_devices]: Single zoned block device mount. device%d: total_segments=%u ---ttt111g\n", i, FDEV(i).total_segments);
 			FDEV(i).total_segments =
 				le32_to_cpu(RDEV(i).total_segments);
-			pr_info("[f2fs_scan_devices]: Single zoned block device mount. device%d: total_segments=%u ---ttt222g\n", i, FDEV(i).total_segments);
+			// pr_info("[f2fs_scan_devices]: Single zoned block device mount. device%d: total_segments=%u ---ttt222g\n", i, FDEV(i).total_segments);
 
 		} else { 
 			/* Multi-device mount */
 			memcpy(FDEV(i).path, RDEV(i).path, MAX_PATH_LEN);
 			FDEV(i).total_segments =
 				le32_to_cpu(RDEV(i).total_segments);
-			pr_info("[f2fs_scan_devices]: Multi-device mount. device%d: total_segments=%u ---ttt\n", i, FDEV(i).total_segments);
+			// pr_info("[f2fs_scan_devices]: Multi-device mount. device%d: total_segments=%u ---ttt\n", i, FDEV(i).total_segments);
 			if (i == 0) {
 				FDEV(i).start_blk = 0;
 				FDEV(i).end_blk = FDEV(i).start_blk +

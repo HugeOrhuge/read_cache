@@ -158,10 +158,10 @@ int blkdev_report_zones(struct block_device *bdev, sector_t sector,
 	struct gendisk *disk = bdev->bd_disk;
 	sector_t capacity = get_capacity(disk);
 
-	pr_info("blkdev_report_zones: bdev=%px, sector=%llu, nr_zones=%u, cb=%px, data=%px\n",
-		 bdev, (unsigned long long)sector, nr_zones, cb, data);
-	pr_info("  disk=%px, disk_name=%s, capacity=%llu\n",
-		 disk, disk ? disk->disk_name : "NULL", (unsigned long long)capacity);
+	// pr_info("blkdev_report_zones: bdev=%px, sector=%llu, nr_zones=%u, cb=%px, data=%px\n",
+	// 	 bdev, (unsigned long long)sector, nr_zones, cb, data);
+	// pr_info("  disk=%px, disk_name=%s, capacity=%llu\n",
+	// 	 disk, disk ? disk->disk_name : "NULL", (unsigned long long)capacity);
 
 	// if (!blk_queue_is_zoned(bdev_get_queue(bdev)) ||
 	//     WARN_ON_ONCE(!disk->fops->report_zones))
@@ -181,10 +181,10 @@ int blkdev_report_zones(struct block_device *bdev, sector_t sector,
 		return 0;
 	}
 
-	pr_info("  Calling disk->fops->report_zones (%px)\n", disk->fops->report_zones);
+	// pr_info("  Calling disk->fops->report_zones (%px)\n", disk->fops->report_zones);
 
 	int ret = disk->fops->report_zones(disk, sector, nr_zones, cb, data);
-	pr_info("  [ret] disk->fops->report_zones returned %d\n", ret);
+	// pr_info("  [ret] disk->fops->report_zones returned %d\n", ret);
 	// return disk->fops->report_zones(disk, sector, nr_zones, cb, data);
 	return ret;
 }

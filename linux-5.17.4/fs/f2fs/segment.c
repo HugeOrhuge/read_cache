@@ -3069,6 +3069,7 @@ static void new_curseg(struct f2fs_sb_info *sbi, int type, bool new_sec)
 			type, seg_type, segno, curseg->next_segno, curseg->inited);
 
 	if (curseg->inited){
+		/* 分配新的seg时前一个 sum block 要写入 */
 #if META_FOR_ZNS
 		insert_ssa_log(sbi, segno, curseg->sum_blk);
 #endif

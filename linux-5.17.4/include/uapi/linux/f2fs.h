@@ -46,6 +46,8 @@
 					struct f2fs_free_zone_info)
 #define F2FS_IOC_SET_STREAM_ID		_IOW(F2FS_IOCTL_MAGIC, 26, __u32)
 #define F2FS_IOC_GET_STREAM_ID		_IOR(F2FS_IOCTL_MAGIC, 27, __u32)
+#define F2FS_IOC_GET_CURSEC_FREE_BLOCKS	_IOWR(F2FS_IOCTL_MAGIC, 28,	\
+					struct f2fs_cursec_free_info)
 
 /*
  * should be same as XFS_IOC_GOINGDOWN.
@@ -112,6 +114,16 @@ struct f2fs_free_zone_info {
 	__u32 free_zones;
 	__u32 total_zones;
 	__u64 free_sections;
+};
+
+struct f2fs_cursec_free_info {
+	__u32 curseg_type;
+	__u32 cursec;
+	__u32 curseg;
+	__u32 next_blkoff;
+	__u32 usable_segs_in_sec;
+	__u32 reserved;
+	__u64 free_blocks;
 };
 
 #endif /* _UAPI_LINUX_F2FS_H */
