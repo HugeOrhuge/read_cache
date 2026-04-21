@@ -3073,7 +3073,6 @@ static void new_curseg(struct f2fs_sb_info *sbi, int type, bool new_sec)
 #if META_FOR_ZNS
 		insert_ssa_log(sbi, segno, curseg->sum_blk);
 #endif
-		f2fs_log_sum_blk_write(sbi, curseg->sum_blk, segno);
 		write_sum_page(sbi, curseg->sum_blk,
 				GET_SUM_BLOCK(sbi, segno));
 
@@ -3567,7 +3566,6 @@ static void change_curseg(struct f2fs_sb_info *sbi, int type, bool flush)
 	struct page *sum_page;
 
 	if (flush) {
-		f2fs_log_sum_blk_write(sbi, curseg->sum_blk, segno);
 		write_sum_page(sbi, curseg->sum_blk,
 					GET_SUM_BLOCK(sbi, curseg->segno));
 	}
@@ -3652,7 +3650,6 @@ static void __f2fs_save_inmem_curseg(struct f2fs_sb_info *sbi, int type)
 		goto out;
 
 	if (get_valid_blocks(sbi, curseg->segno, false)) {
-		f2fs_log_sum_blk_write(sbi, curseg->sum_blk, segno);
 		write_sum_page(sbi, curseg->sum_blk,
 				GET_SUM_BLOCK(sbi, curseg->segno));
 	} else {
@@ -5196,23 +5193,6 @@ static void add_sits_in_set(struct f2fs_sb_info *sbi)
 
 #if META_FOR_ZNS
 #if DELAYED_MERGE
-static void f2fs_log_sum_blk_write(struct f2fs_sb_info *sbi, block_t blkaddr,
-				 unsigned int segno)
-{
-	bool is_zone_last;
-
-	if (!sbi || !sbi->blocks_per_blkz)
-		return;
-
-	is_zone_last = (blkaddr % sbi->blocks_per_blkz) ==
-			(sbi->blocks_per_blkz - 1);
-
-	if (is_zone_last) {
-		f2fs_info(sbi,
-			"ssa write: blkaddr=%u segno=%u zone_last=%d",
-			blkaddr, segno, is_zone_last);
-	}
-}
 
 int __flush_sum_blks(struct f2fs_sb_info *sbi){
 	struct f2fs_sm_info *sm_i = SM_I(sbi);
@@ -5262,8 +5242,6 @@ continue_unlock:
 			}
 
 #if !NAIVE_MFZ
-			f2fs_log_sum_blk_write(sbi, page->index,
-					GET_SEGNO_FROM_SUM_ADDR(sbi, page->index));
 			if(write_sum_log_page(sbi, GET_SEGNO_FROM_SUM_ADDR(sbi, page->index),
 						page_address(page)))
 			{
@@ -5397,8 +5375,7 @@ continue_unlock:
 			}
 			
 			if(!merge) {
-				f2fs_log_sum_blk_write(sbi, page->index,
-						GET_SEGNO_FROM_SUM_ADDR(sbi, page->index));
+				
 				if(write_sum_log_page(sbi, GET_SEGNO_FROM_SUM_ADDR(sbi, page->index),
 							page_address(page))) 
 				{
