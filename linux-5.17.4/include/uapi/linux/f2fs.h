@@ -67,6 +67,8 @@
 #define F2FS_TRIM_FILE_ZEROOUT		0x2	/* zero out */
 #define F2FS_TRIM_FILE_MASK		0x3
 
+#define F2FS_STREAM_ID_SPIN_WRITE 1
+
 struct f2fs_gc_range {
 	__u32 sync;
 	__u64 start;
