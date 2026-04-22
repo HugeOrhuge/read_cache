@@ -21,6 +21,18 @@ static int read_cache_fs_fd = -1;
 static size_t packed_zone_threshold_bytes = READ_CACHE_DEFAULT_PACKED_ZONE_BYTES;
 #define READ_CACHE_CURSEG_WARM_DATA 1
 
+#define RC_LOG_ERR(fmt, ...) \
+	fprintf(stderr, "read_cache: " fmt "\n", ##__VA_ARGS__)
+#define RC_LOG_INFO(fmt, ...) \
+	fprintf(stderr, "read_cache: " fmt "\n", ##__VA_ARGS__)
+
+static const char *rc_strerror(int err)
+{
+	if (err < 0)
+		err = -err;
+	return strerror(err);
+}
+
 /* 初始化热度表和布隆过滤器子系统。 */
 int read_cache_init(uint64_t read_id_size_bytes)
 {
@@ -31,26 +43,42 @@ int read_cache_init(uint64_t read_id_size_bytes)
 	unsigned int max_ids;
 	int ret;
 
-	if (!read_id_size_bytes)
+	RC_LOG_INFO("init: read_id_size_bytes=%llu",
+		(unsigned long long)read_id_size_bytes);
+
+	if (!read_id_size_bytes) {
+		RC_LOG_ERR("init: invalid read_id_size_bytes");
 		return -EINVAL;
-	if (read_cache_fs_fd < 0)
+	}
+	if (read_cache_fs_fd < 0) {
+		RC_LOG_ERR("init: fs fd not set");
 		return -ENODEV;
+	}
 
 	ret = ioctl(read_cache_fs_fd, F2FS_IOC_GET_FREE_ZONES, &info);
-	if (ret)
+	if (ret) {
+		RC_LOG_ERR("init: get_free_zones ioctl failed: %s",
+			rc_strerror(errno));
 		return -errno;
-	if (!info.zone_capacity_blocks)
+	}
+	if (!info.zone_capacity_blocks) {
+		RC_LOG_ERR("init: zone_capacity_blocks is 0");
 		return -EINVAL;
+	}
 
 	zone_bytes = (uint64_t)info.zone_capacity_blocks * READ_CACHE_BLOCK_SIZE;
-	if (!zone_bytes)
+	if (!zone_bytes) {
+		RC_LOG_ERR("init: zone_bytes is 0");
 		return -EINVAL;
+	}
 
 	/* max_ids = free_zone_bytes / read_id_size_bytes - 48 */
 	total_bytes = (uint64_t)info.free_zones * zone_bytes;
 	max_ids64 = total_bytes / read_id_size_bytes;
-	if (max_ids64 <= 48)
+	if (max_ids64 <= 48) {
+		RC_LOG_ERR("init: not enough space for read_id allocation");
 		return -ENOSPC;
+	}
 	max_ids64 -= 48;
 	if (max_ids64 > UINT_MAX)
 		max_ids64 = UINT_MAX;
@@ -58,8 +86,11 @@ int read_cache_init(uint64_t read_id_size_bytes)
 
 	ret = hotness_init(max_ids);
 	/* 初始化内存热度表。 */
-	if (ret)
+	if (ret) {
+		RC_LOG_ERR("init: hotness_init failed: %s",
+			rc_strerror(ret));
 		return ret;
+	}
 
 	/* 初始化每个 read_id 的布隆过滤器。 */
 	return bloom_filter_init(max_ids, BLOOM_FILTER_BYTES,
@@ -93,10 +124,13 @@ static void packed_zone_init_if_needed(struct packed_zone *pz)
 /* 设置用于 ioctl 的 f2fs 文件描述符。 */
 int read_cache_set_fs_fd(int fd)
 {
-	if (fd < 0)
+	if (fd < 0) {
+		RC_LOG_ERR("set_fs_fd: invalid fd");
 		return -EINVAL;
+	}
 
 	read_cache_fs_fd = fd;
+	RC_LOG_INFO("set_fs_fd: fd=%d", fd);
 	return 0;
 }
 
@@ -106,14 +140,21 @@ int read_cache_check_space(const struct packed_zone *pz)
 	struct f2fs_free_zone_info info;
 	int ret;
 
-	if (!pz)
+	if (!pz) {
+		RC_LOG_ERR("check_space: pz is NULL");
 		return -EINVAL;
-	if (read_cache_fs_fd < 0)
+	}
+	if (read_cache_fs_fd < 0) {
+		RC_LOG_ERR("check_space: fs fd not set");
 		return -ENODEV;
+	}
 
 	ret = ioctl(read_cache_fs_fd, F2FS_IOC_GET_FREE_ZONES, &info);
-	if (ret)
+	if (ret) {
+		RC_LOG_ERR("check_space: get_free_zones ioctl failed: %s",
+			rc_strerror(errno));
 		return -errno;
+	}
 
 	return (int)info.free_zones;
 }
@@ -181,12 +222,17 @@ static void *read_cache_worker_main(void *unused)
 
 			if (read_cache_packed_zone.total_bytes &&
 			    projected >= packed_zone_threshold_bytes) {
+				RC_LOG_INFO("worker: preflush projected=%llu threshold=%llu",
+					(unsigned long long)projected,
+					(unsigned long long)packed_zone_threshold_bytes);
 				ret = packed_zone_flush(&read_cache_packed_zone,
 							  flushed_dir, sizeof(flushed_dir));
 				if (!ret) {
 					packed_zone_free(&read_cache_packed_zone);
 					read_cache_pad_cur_zone(flushed_dir);
 				} else {
+					RC_LOG_ERR("worker: flush failed: %s",
+						rc_strerror(ret));
 					close(item->fd);
 					free(item->path);
 					free(item);
@@ -201,8 +247,10 @@ static void *read_cache_worker_main(void *unused)
 		free(item->path);
 		free(item);
 
-		if (ret)
+		if (ret) {
+			RC_LOG_ERR("worker: add_file failed: %s", rc_strerror(ret));
 			continue;
+		}
 	}
 
 	return NULL;
@@ -229,8 +277,10 @@ int read_cache_start_worker(void)
 {
 	int ret;
 
-	if (read_cache_worker_running)
+	if (read_cache_worker_running) {
+		RC_LOG_INFO("start_worker: already running");
 		return 0;
+	}
 
 	read_cache_worker_stop = false;
 	read_cache_worker_running = true;
@@ -242,17 +292,22 @@ int read_cache_start_worker(void)
 			     read_cache_worker_main, NULL);
 	if (ret) {
 		read_cache_worker_running = false;
+		RC_LOG_ERR("start_worker: pthread_create failed: %s",
+			rc_strerror(ret));
 		return -ret;
 	}
 
+	RC_LOG_INFO("start_worker: started");
 	return 0;
 }
 
 /* 停止后台打包线程。 */
 void read_cache_stop_worker(void)
 {
-	if (!read_cache_worker_running)
+	if (!read_cache_worker_running) {
+		RC_LOG_INFO("stop_worker: not running");
 		return;
+	}
 
 	pthread_mutex_lock(&read_cache_queue_lock);
 	read_cache_worker_stop = true;
@@ -261,6 +316,7 @@ void read_cache_stop_worker(void)
 
 	pthread_join(read_cache_worker, NULL);
 	read_cache_worker_running = false;
+	RC_LOG_INFO("stop_worker: stopped");
 
 	packed_zone_free(&read_cache_packed_zone);
 	read_cache_queue_clear();
@@ -273,25 +329,36 @@ int read_cache_enqueue_file(const char *path, int fd)
 	char *path_copy;
 	int dup_fd;
 
-	if (!path)
+	if (!path) {
+		RC_LOG_ERR("enqueue_file: path is NULL");
 		return -EINVAL;
-	if (fd < 0)
+	}
+	if (fd < 0) {
+		RC_LOG_ERR("enqueue_file: invalid fd");
 		return -EINVAL;
-	if (!read_cache_worker_running)
+	}
+	if (!read_cache_worker_running) {
+		RC_LOG_ERR("enqueue_file: worker not running");
 		return -ENODEV;
+	}
 
 	dup_fd = dup(fd);
-	if (dup_fd < 0)
+	if (dup_fd < 0) {
+		RC_LOG_ERR("enqueue_file: dup failed: %s",
+			rc_strerror(errno));
 		return -errno;
+	}
 
 	path_copy = strdup(path);
 	if (!path_copy) {
+		RC_LOG_ERR("enqueue_file: strdup failed");
 		close(dup_fd);
 		return -ENOMEM;
 	}
 
 	item = calloc(1, sizeof(*item));
 	if (!item) {
+		RC_LOG_ERR("enqueue_file: alloc failed");
 		free(path_copy);
 		close(dup_fd);
 		return -ENOMEM;
@@ -305,6 +372,7 @@ int read_cache_enqueue_file(const char *path, int fd)
 	read_cache_queue_push(item);
 	pthread_cond_signal(&read_cache_queue_cond);
 	pthread_mutex_unlock(&read_cache_queue_lock);
+	RC_LOG_INFO("enqueue_file: queued path=%s", path);
 
 	return 0;
 }
@@ -352,21 +420,36 @@ int packed_zone_add_file_from_fd(struct packed_zone *pz, const char *path, int f
 	off_t offset = 0;
 	int ret;
 
-	if (!pz || !path)
+	if (!pz || !path) {
+		RC_LOG_ERR("add_file: invalid args");
 		return -EINVAL;
+	}
 	packed_zone_init_if_needed(pz);
-	if (fd < 0)
+	if (fd < 0) {
+		RC_LOG_ERR("add_file: invalid fd");
 		return -EINVAL;
-	if (fstat(fd, &st))
+	}
+	if (fstat(fd, &st)) {
+		RC_LOG_ERR("add_file: fstat failed: %s",
+			rc_strerror(errno));
 		return -errno;
-	if (!S_ISREG(st.st_mode))
+	}
+	if (!S_ISREG(st.st_mode)) {
+		RC_LOG_ERR("add_file: not a regular file");
 		return -EINVAL;
-	if (st.st_size < 0)
+	}
+	if (st.st_size < 0) {
+		RC_LOG_ERR("add_file: negative size");
 		return -EINVAL;
-	if ((uint64_t)st.st_size > (uint64_t)LLONG_MAX)
+	}
+	if ((uint64_t)st.st_size > (uint64_t)LLONG_MAX) {
+		RC_LOG_ERR("add_file: size exceeds LLONG_MAX");
 		return -EFBIG;
-	if ((uint64_t)st.st_size > (uint64_t)SIZE_MAX)
+	}
+	if ((uint64_t)st.st_size > (uint64_t)SIZE_MAX) {
+		RC_LOG_ERR("add_file: size exceeds SIZE_MAX");
 		return -EFBIG;
+	}
 
 	size = (uint64_t)st.st_size;
 	if (size) {
@@ -385,10 +468,13 @@ int packed_zone_add_file_from_fd(struct packed_zone *pz, const char *path, int f
 			if (read_bytes < 0) {
 				if (errno == EINTR)
 					continue;
+				RC_LOG_ERR("add_file: read failed: %s",
+					rc_strerror(errno));
 				ret = -errno;
 				goto out_free;
 			}
 			if (read_bytes == 0) {
+				RC_LOG_ERR("add_file: unexpected EOF");
 				ret = -EIO;
 				goto out_free;
 			}
@@ -400,12 +486,14 @@ int packed_zone_add_file_from_fd(struct packed_zone *pz, const char *path, int f
 
 	path_copy = strdup(path);
 	if (!path_copy) {
+		RC_LOG_ERR("add_file: strdup failed");
 		ret = -ENOMEM;
 		goto out_free;
 	}
 
 	file = calloc(1, sizeof(*file));
 	if (!file) {
+		RC_LOG_ERR("add_file: alloc failed");
 		free(path_copy);
 		ret = -ENOMEM;
 		goto out_free;
@@ -631,8 +719,11 @@ static void read_cache_pad_cur_zone(const char *read_id_dir)
 		return;
 
 	info.curseg_type = READ_CACHE_CURSEG_WARM_DATA;
-	if (ioctl(read_cache_fs_fd, F2FS_IOC_GET_CURSEC_FREE_BLOCKS, &info))
+	if (ioctl(read_cache_fs_fd, F2FS_IOC_GET_CURSEC_FREE_BLOCKS, &info)) {
+		RC_LOG_ERR("pad_cur_zone: get_cursec_free_blocks failed: %s",
+			rc_strerror(errno));
 		return;
+	}
 
 	pad_bytes = (size_t)info.free_blocks * READ_CACHE_BLOCK_SIZE;
 	if (!pad_bytes)
@@ -642,6 +733,7 @@ static void read_cache_pad_cur_zone(const char *read_id_dir)
 	    >= (int)sizeof(pad_path))
 		return;
 
+	RC_LOG_INFO("pad_cur_zone: pad_bytes=%zu", pad_bytes);
 	read_cache_write_zeros(pad_path, pad_bytes);
 }
 
@@ -657,8 +749,10 @@ int packed_zone_flush(struct packed_zone *pz, char *out_dir, size_t out_len)
 	uint32_t read_id;
 	int ret;
 
-	if (!pz)
+	if (!pz) {
+		RC_LOG_ERR("flush: pz is NULL");
 		return -EINVAL;
+	}
 
 	packed_zone_init_if_needed(pz);
 
@@ -670,6 +764,7 @@ int packed_zone_flush(struct packed_zone *pz, char *out_dir, size_t out_len)
 			return -ENOSPC;
 		if (ret < 0)
 			return ret;
+		RC_LOG_INFO("flush: evict read_id=%u", evict_id);
 
 		/* 生成被驱逐 read_id 的目录名。 */
 		ret = hotness_get_read_id_dir(evict_id, evict_dir,
@@ -693,6 +788,7 @@ int packed_zone_flush(struct packed_zone *pz, char *out_dir, size_t out_len)
 				    sizeof(read_id_dir));
 	if (ret)
 		return ret;
+	RC_LOG_INFO("flush: allocated read_id=%u", read_id);
 
 	/* 清理该 read_id 旧数据。 */
 	read_cache_unlink_read_id_dir(read_id_dir);
@@ -722,8 +818,11 @@ int packed_zone_flush(struct packed_zone *pz, char *out_dir, size_t out_len)
 
 		/* 写入文件内容到f2fs */
 		ret = read_cache_write_file(file_path, file->data, file->size);
-		if (ret)
+		if (ret) {
+			RC_LOG_ERR("flush: write failed: %s",
+				rc_strerror(ret));
 			goto out_release;
+		}
 
 		/* 将路径写入该 read_id 的布隆过滤器 */
 		bloom_filter_set(read_id, file->path);
@@ -784,15 +883,22 @@ int read_cache_query(const char *file_path)
 	int ret;
 	int fd;
 
-	if (!file_path)
+	if (!file_path) {
+		RC_LOG_ERR("query: file_path is NULL");
 		return -EINVAL;
+	}
 
 	/* 通过布隆过滤器查询候选 read_id。 */
 	ret = bloom_filter_query(file_path, &candidates);
-	if (ret < 0)
+	if (ret < 0) {
+		RC_LOG_ERR("query: bloom_filter_query failed: %s",
+			rc_strerror(ret));
 		return ret;
-	if (ret == 0)
+	}
+	if (ret == 0) {
+		RC_LOG_INFO("query: miss path=%s", file_path);
 		return -ENOENT;
+	}
 
 	list_for_each(pos, &candidates) {
 		cur = list_entry(pos, struct read_id_list, list);
@@ -806,11 +912,13 @@ int read_cache_query(const char *file_path)
 		if (fd >= 0) {
 			/* 命中后释放候选列表并返回 fd。 */
 			bloom_filter_free_list(&candidates);
+			RC_LOG_INFO("query: hit path=%s", file_path);
 			return fd;
 		}
 	}
 
 	/* 遍历结束后释放候选列表。 */
 	bloom_filter_free_list(&candidates);
+	RC_LOG_INFO("query: miss path=%s", file_path);
 	return -ENOENT;
 }
