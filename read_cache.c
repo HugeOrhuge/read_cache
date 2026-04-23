@@ -129,7 +129,7 @@ int read_cache_set_fs_fd(int fd)
 		return -EINVAL;
 	}
 
-	read_cache_fs_fd = fd;
+	read_cache_fs_fd = dup(fd);
 	RC_LOG_INFO("set_fs_fd: fd=%d", fd);
 	return 0;
 }
@@ -320,6 +320,7 @@ void read_cache_stop_worker(void)
 
 	packed_zone_free(&read_cache_packed_zone);
 	read_cache_queue_clear();
+	close(read_cache_fs_fd);
 }
 
 /* 入队一个需要打包的文件（由后台线程读取）。 */
@@ -794,8 +795,10 @@ int packed_zone_flush(struct packed_zone *pz, char *out_dir, size_t out_len)
 	read_cache_unlink_read_id_dir(read_id_dir);
 	/* 创建 read_id 顶层目录。 */
 	ret = read_cache_mkdir_p(read_id_dir, 0755);
-	if (ret)
+	if (ret) {
+		RC_LOG_ERR("flush: mkdir_p failed: %s", rc_strerror(ret));
 		return ret;
+	}
 
 	if (out_dir && out_len) {
 		int copied = snprintf(out_dir, out_len, "%s", read_id_dir);
