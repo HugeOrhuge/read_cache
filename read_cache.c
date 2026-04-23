@@ -22,6 +22,7 @@ static int read_cache_fs_fd = -1;
 static size_t packed_zone_threshold_bytes = READ_CACHE_DEFAULT_PACKED_ZONE_BYTES;
 static char read_cache_root_dir[PATH_MAX];
 #define READ_CACHE_CURSEG_WARM_DATA 1
+#define SPINFS_WRITE_POOL_SIZE 48
 
 static const char *rc_strerror(int err)
 {
@@ -119,14 +120,14 @@ int read_cache_init(uint64_t read_id_size_bytes, const char *root_dir)
 		return -EINVAL;
 	}
 
-	/* max_ids = free_zone_bytes / read_id_size_bytes - 48 */
+	/* max_ids = free_zone_bytes / read_id_size_bytes - SPINFS_WRITE_POOL_SIZE */
 	total_bytes = (uint64_t)info.free_zones * zone_bytes;
 	max_ids64 = total_bytes / read_id_size_bytes;
-	if (max_ids64 <= 48) {
+	if (max_ids64 <= SPINFS_WRITE_POOL_SIZE) {
 		fs_err("init: not enough space for read_id allocation\n");
 		return -ENOSPC;
 	}
-	max_ids64 -= 48;
+	max_ids64 -= SPINFS_WRITE_POOL_SIZE;
 	if (max_ids64 > UINT_MAX)
 		max_ids64 = UINT_MAX;
 	max_ids = (unsigned int)max_ids64;
@@ -203,7 +204,10 @@ int read_cache_check_space(const struct packed_zone *pz)
 		return -errno;
 	}
 
-	return (int)info.free_zones;
+	fs_test_info("free_zones=%u total_zones=%u reserved_zones=%u prefree_zones=%u\n",
+		info.free_zones, info.total_zones, info.reserved_zones, info.prefree_zones);
+
+	return (int)info.free_zones > SPINFS_WRITE_POOL_SIZE;
 }
 
 static void read_cache_queue_push(struct read_cache_queue_item *item)
