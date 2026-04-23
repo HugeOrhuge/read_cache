@@ -110,7 +110,6 @@ struct f2fs_free_zone_info {
 	__u32 blocks_per_blkz;
 	__u32 zone_capacity_blocks;
 	__u32 reserved_zones;
-	__u32 empty_zones;
 	__u32 free_zones_sit;
 	__u32 prefree_zones;
 	__u32 free_zones;
