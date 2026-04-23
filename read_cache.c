@@ -123,11 +123,6 @@ int read_cache_init(uint64_t read_id_size_bytes, const char *root_dir)
 	/* max_ids = free_zone_bytes / read_id_size_bytes - SPINFS_WRITE_POOL_SIZE */
 	total_bytes = (uint64_t)info.free_zones * zone_bytes;
 	max_ids64 = total_bytes / read_id_size_bytes;
-	if (max_ids64 <= SPINFS_WRITE_POOL_SIZE) {
-		fs_err("init: not enough space for read_id allocation\n");
-		return -ENOSPC;
-	}
-	max_ids64 -= SPINFS_WRITE_POOL_SIZE;
 	if (max_ids64 > UINT_MAX)
 		max_ids64 = UINT_MAX;
 	max_ids = (unsigned int)max_ids64;
@@ -810,7 +805,7 @@ int packed_zone_flush(struct packed_zone *pz, char *out_dir, size_t out_len)
 	packed_zone_init_if_needed(pz);
 
 	/* 写入前检查空间，不足则驱逐热度最小的 read_id。 */
-	while (read_cache_check_space(pz) <= 0) {
+	while (read_cache_check_space(pz)) {
 		/* 取出热度最小的 read_id。 */
 		ret = hotness_get_min_read_id(&evict_id);
 		if (ret == -ENOENT)
