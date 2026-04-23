@@ -25,6 +25,7 @@
 #include <linux/fileattr.h>
 #include <linux/fadvise.h>
 #include <linux/iomap.h>
+#include <linux/bitmap.h>
 
 #include "f2fs.h"
 #include "node.h"
@@ -3027,6 +3028,8 @@ static int f2fs_ioc_get_free_zones(struct file *filp, unsigned long arg)
 	unsigned int free_zones;
 	unsigned int prefree_segs;
 	unsigned int prefree_zones;
+	unsigned int spin_free_secs = 0;
+	unsigned int spin_prefree_segs = 0;
 	u64 free_blocks;
 	u64 reserved_blocks;
 	u64 prefree_blocks;
@@ -3044,8 +3047,54 @@ static int f2fs_ioc_get_free_zones(struct file *filp, unsigned long arg)
 	free_secs = free_i->free_sections;
 	spin_unlock(&free_i->segmap_lock);
 
+	if (f2fs_sb_has_blkzoned(sbi) && SM_I(sbi)->spin_write_pool.zone_map &&
+			SM_I(sbi)->spin_write_pool.max_zones) {
+		struct f2fs_stream_zone_pool *pool = &SM_I(sbi)->spin_write_pool;
+		unsigned int zoneno;
+
+		spin_lock(&free_i->segmap_lock);
+		for (zoneno = 0; zoneno < pool->total_zones; zoneno++) {
+			unsigned int zone_start;
+			unsigned int zone_end;
+			unsigned int secno;
+
+			if (!test_bit(zoneno, pool->zone_map))
+				continue;
+			zone_start = zoneno * sbi->secs_per_zone;
+			zone_end = zone_start + sbi->secs_per_zone;
+			for (secno = zone_start; secno < zone_end; secno++) {
+				if (!test_bit(secno, free_i->free_secmap))
+					spin_free_secs++;
+			}
+		}
+		spin_unlock(&free_i->segmap_lock);
+
+		if (DIRTY_I(sbi)->dirty_segmap[PRE]) {
+			struct dirty_seglist_info *dirty_i = DIRTY_I(sbi);
+			unsigned long *prefree_map = dirty_i->dirty_segmap[PRE];
+			unsigned int segno;
+
+			mutex_lock(&dirty_i->seglist_lock);
+			for_each_set_bit(segno, prefree_map, MAIN_SEGS(sbi)) {
+				unsigned int pzoneno = GET_ZONE_FROM_SEG(sbi, segno);
+
+				if (test_bit(pzoneno, pool->zone_map))
+					spin_prefree_segs++;
+			}
+			mutex_unlock(&dirty_i->seglist_lock);
+		}
+	}
+
 	reserved_secs = reserved_sections(sbi);
 	prefree_segs = prefree_segments(sbi);
+	if (free_secs > spin_free_secs)
+		free_secs -= spin_free_secs;
+	else
+		free_secs = 0;
+	if (prefree_segs > spin_prefree_segs)
+		prefree_segs -= spin_prefree_segs;
+	else
+		prefree_segs = 0;
 	free_blocks = (u64)free_secs * sbi->segs_per_sec * sbi->blocks_per_seg;
 	reserved_blocks = (u64)reserved_secs * sbi->segs_per_sec * sbi->blocks_per_seg;
 	prefree_blocks = (u64)prefree_segs * sbi->blocks_per_seg;
