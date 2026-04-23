@@ -31,7 +31,7 @@ struct packed_zone {
 };
 
 /* 初始化热度表和布隆过滤器元数据。 */
-int read_cache_init(uint64_t read_id_size_bytes);
+int read_cache_init(uint64_t read_id_size_bytes, const char *root_dir);
 /* 设置用于 ioctl 的 f2fs 文件描述符。 */
 int read_cache_set_fs_fd(int fd);
 /* 检查设备空间是否足够写入该 packed zone。 */

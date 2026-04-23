@@ -19,6 +19,7 @@
 
 static int read_cache_fs_fd = -1;
 static size_t packed_zone_threshold_bytes = READ_CACHE_DEFAULT_PACKED_ZONE_BYTES;
+static char read_cache_root_dir[PATH_MAX];
 #define READ_CACHE_CURSEG_WARM_DATA 1
 
 #define RC_LOG_ERR(fmt, ...) \
@@ -33,8 +34,53 @@ static const char *rc_strerror(int err)
 	return strerror(err);
 }
 
+static int read_cache_set_root_dir(const char *root_dir)
+{
+	size_t len;
+
+	if (!root_dir || !root_dir[0])
+		return -EINVAL;
+
+	len = strlen(root_dir);
+	if (len >= sizeof(read_cache_root_dir))
+		return -ENAMETOOLONG;
+
+	strncpy(read_cache_root_dir, root_dir, sizeof(read_cache_root_dir));
+	read_cache_root_dir[sizeof(read_cache_root_dir) - 1] = '\0';
+	if (len > 1 && read_cache_root_dir[len - 1] == '/')
+		read_cache_root_dir[len - 1] = '\0';
+
+	return 0;
+}
+
+static int read_cache_join_root(const char *child, char *out, size_t out_len)
+{
+	if (!child || !out || !out_len)
+		return -EINVAL;
+	if (!read_cache_root_dir[0])
+		return -ENODEV;
+
+	if (snprintf(out, out_len, "%s/%s", read_cache_root_dir, child)
+	    >= (int)out_len)
+		return -ENAMETOOLONG;
+
+	return 0;
+}
+
+static int read_cache_get_read_id_dir(uint32_t read_id, char *out, size_t out_len)
+{
+	char read_id_name[PATH_MAX];
+	int ret;
+
+	ret = hotness_get_read_id_dir(read_id, read_id_name, sizeof(read_id_name));
+	if (ret)
+		return ret;
+
+	return read_cache_join_root(read_id_name, out, out_len);
+}
+
 /* 初始化热度表和布隆过滤器子系统。 */
-int read_cache_init(uint64_t read_id_size_bytes)
+int read_cache_init(uint64_t read_id_size_bytes, const char *root_dir)
 {
 	struct f2fs_free_zone_info info;
 	uint64_t zone_bytes;
@@ -49,6 +95,11 @@ int read_cache_init(uint64_t read_id_size_bytes)
 	if (!read_id_size_bytes) {
 		RC_LOG_ERR("init: invalid read_id_size_bytes");
 		return -EINVAL;
+	}
+	ret = read_cache_set_root_dir(root_dir);
+	if (ret) {
+		RC_LOG_ERR("init: invalid root_dir");
+		return ret;
 	}
 	if (read_cache_fs_fd < 0) {
 		RC_LOG_ERR("init: fs fd not set");
@@ -745,6 +796,7 @@ int packed_zone_flush(struct packed_zone *pz, char *out_dir, size_t out_len)
 	struct list_head *pos;
 	char evict_dir[PATH_MAX];
 	char read_id_dir[PATH_MAX];
+	char read_id_name[PATH_MAX];
 	char file_path[PATH_MAX];
 	uint32_t evict_id;
 	uint32_t read_id;
@@ -768,8 +820,7 @@ int packed_zone_flush(struct packed_zone *pz, char *out_dir, size_t out_len)
 		RC_LOG_INFO("flush: evict read_id=%u", evict_id);
 
 		/* 生成被驱逐 read_id 的目录名。 */
-		ret = hotness_get_read_id_dir(evict_id, evict_dir,
-					     sizeof(evict_dir));
+		ret = read_cache_get_read_id_dir(evict_id, evict_dir, sizeof(evict_dir));
 		if (ret)
 			return ret;
 
@@ -785,8 +836,11 @@ int packed_zone_flush(struct packed_zone *pz, char *out_dir, size_t out_len)
 	}
 
 	/* 空间足够后，分配新的 read_id 并生成目录名。 */
-	ret = hotness_alloc_read_id(&read_id, read_id_dir,
-				    sizeof(read_id_dir));
+	ret = hotness_alloc_read_id(&read_id, read_id_name,
+				    sizeof(read_id_name));
+	if (ret)
+		return ret;
+	ret = read_cache_join_root(read_id_name, read_id_dir, sizeof(read_id_dir));
 	if (ret)
 		return ret;
 	RC_LOG_INFO("flush: allocated read_id=%u", read_id);
@@ -851,11 +905,14 @@ out_release:
 static int read_cache_try_read(uint32_t read_id, const char *file_path)
 {
 	char full_path[PATH_MAX];
+	char read_id_dir[PATH_MAX];
 	int fd;
 	char buf;
 
+	if (read_cache_get_read_id_dir(read_id, read_id_dir, sizeof(read_id_dir)))
+		return -ENODEV;
 	if (snprintf(full_path, sizeof(full_path),
-		     READ_ID_DIR_FMT "/%s", read_id, file_path)
+		     "%s/%s", read_id_dir, file_path)
 	    >= (int)sizeof(full_path))
 		return -ENAMETOOLONG;
 
