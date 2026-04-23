@@ -16,16 +16,12 @@
 #include <f2fs.h>
 
 #include "read_cache.h"
+#include "log.h"
 
 static int read_cache_fs_fd = -1;
 static size_t packed_zone_threshold_bytes = READ_CACHE_DEFAULT_PACKED_ZONE_BYTES;
 static char read_cache_root_dir[PATH_MAX];
 #define READ_CACHE_CURSEG_WARM_DATA 1
-
-#define RC_LOG_ERR(fmt, ...) \
-	fprintf(stderr, "read_cache: " fmt "\n", ##__VA_ARGS__)
-#define RC_LOG_INFO(fmt, ...) \
-	fprintf(stderr, "read_cache: " fmt "\n", ##__VA_ARGS__)
 
 static const char *rc_strerror(int err)
 {
@@ -89,37 +85,37 @@ int read_cache_init(uint64_t read_id_size_bytes, const char *root_dir)
 	unsigned int max_ids;
 	int ret;
 
-	RC_LOG_INFO("init: read_id_size_bytes=%llu",
+	fs_test_info("init: read_id_size_bytes=%llu\n",
 		(unsigned long long)read_id_size_bytes);
 
 	if (!read_id_size_bytes) {
-		RC_LOG_ERR("init: invalid read_id_size_bytes");
+		fs_err("init: invalid read_id_size_bytes\n");
 		return -EINVAL;
 	}
 	ret = read_cache_set_root_dir(root_dir);
 	if (ret) {
-		RC_LOG_ERR("init: invalid root_dir");
+		fs_err("init: invalid root_dir\n");
 		return ret;
 	}
 	if (read_cache_fs_fd < 0) {
-		RC_LOG_ERR("init: fs fd not set");
+		fs_err("init: fs fd not set\n");
 		return -ENODEV;
 	}
 
 	ret = ioctl(read_cache_fs_fd, F2FS_IOC_GET_FREE_ZONES, &info);
 	if (ret) {
-		RC_LOG_ERR("init: get_free_zones ioctl failed: %s",
+		fs_err("init: get_free_zones ioctl failed: %s\n",
 			rc_strerror(errno));
 		return -errno;
 	}
 	if (!info.zone_capacity_blocks) {
-		RC_LOG_ERR("init: zone_capacity_blocks is 0");
+		fs_err("init: zone_capacity_blocks is 0\n");
 		return -EINVAL;
 	}
 
 	zone_bytes = (uint64_t)info.zone_capacity_blocks * READ_CACHE_BLOCK_SIZE;
 	if (!zone_bytes) {
-		RC_LOG_ERR("init: zone_bytes is 0");
+		fs_err("init: zone_bytes is 0\n");
 		return -EINVAL;
 	}
 
@@ -127,7 +123,7 @@ int read_cache_init(uint64_t read_id_size_bytes, const char *root_dir)
 	total_bytes = (uint64_t)info.free_zones * zone_bytes;
 	max_ids64 = total_bytes / read_id_size_bytes;
 	if (max_ids64 <= 48) {
-		RC_LOG_ERR("init: not enough space for read_id allocation");
+		fs_err("init: not enough space for read_id allocation\n");
 		return -ENOSPC;
 	}
 	max_ids64 -= 48;
@@ -138,7 +134,7 @@ int read_cache_init(uint64_t read_id_size_bytes, const char *root_dir)
 	ret = hotness_init(max_ids);
 	/* 初始化内存热度表。 */
 	if (ret) {
-		RC_LOG_ERR("init: hotness_init failed: %s",
+		fs_err("init: hotness_init failed: %s\n",
 			rc_strerror(ret));
 		return ret;
 	}
@@ -176,12 +172,12 @@ static void packed_zone_init_if_needed(struct packed_zone *pz)
 int read_cache_set_fs_fd(int fd)
 {
 	if (fd < 0) {
-		RC_LOG_ERR("set_fs_fd: invalid fd");
+		fs_err("set_fs_fd: invalid fd\n");
 		return -EINVAL;
 	}
 
 	read_cache_fs_fd = dup(fd);
-	RC_LOG_INFO("set_fs_fd: fd=%d", fd);
+	fs_test_info("set_fs_fd: fd=%d\n", fd);
 	return 0;
 }
 
@@ -192,17 +188,17 @@ int read_cache_check_space(const struct packed_zone *pz)
 	int ret;
 
 	if (!pz) {
-		RC_LOG_ERR("check_space: pz is NULL");
+		fs_err("check_space: pz is NULL\n");
 		return -EINVAL;
 	}
 	if (read_cache_fs_fd < 0) {
-		RC_LOG_ERR("check_space: fs fd not set");
+		fs_err("check_space: fs fd not set\n");
 		return -ENODEV;
 	}
 
 	ret = ioctl(read_cache_fs_fd, F2FS_IOC_GET_FREE_ZONES, &info);
 	if (ret) {
-		RC_LOG_ERR("check_space: get_free_zones ioctl failed: %s",
+		fs_err("check_space: get_free_zones ioctl failed: %s\n",
 			rc_strerror(errno));
 		return -errno;
 	}
@@ -273,7 +269,7 @@ static void *read_cache_worker_main(void *unused)
 
 			if (read_cache_packed_zone.total_bytes &&
 			    projected >= packed_zone_threshold_bytes) {
-				RC_LOG_INFO("worker: preflush projected=%llu threshold=%llu",
+				fs_test_info("worker: preflush projected=%llu threshold=%llu\n",
 					(unsigned long long)projected,
 					(unsigned long long)packed_zone_threshold_bytes);
 				ret = packed_zone_flush(&read_cache_packed_zone,
@@ -282,7 +278,7 @@ static void *read_cache_worker_main(void *unused)
 					packed_zone_free(&read_cache_packed_zone);
 					read_cache_pad_cur_zone(flushed_dir);
 				} else {
-					RC_LOG_ERR("worker: flush failed: %s",
+					fs_err("worker: flush failed: %s\n",
 						rc_strerror(ret));
 					close(item->fd);
 					free(item->path);
@@ -299,7 +295,7 @@ static void *read_cache_worker_main(void *unused)
 		free(item);
 
 		if (ret) {
-			RC_LOG_ERR("worker: add_file failed: %s", rc_strerror(ret));
+			fs_err("worker: add_file failed: %s\n", rc_strerror(ret));
 			continue;
 		}
 	}
@@ -329,7 +325,7 @@ int read_cache_start_worker(void)
 	int ret;
 
 	if (read_cache_worker_running) {
-		RC_LOG_INFO("start_worker: already running");
+		fs_test_info("start_worker: already running\n");
 		return 0;
 	}
 
@@ -343,12 +339,12 @@ int read_cache_start_worker(void)
 			     read_cache_worker_main, NULL);
 	if (ret) {
 		read_cache_worker_running = false;
-		RC_LOG_ERR("start_worker: pthread_create failed: %s",
+		fs_err("start_worker: pthread_create failed: %s\n",
 			rc_strerror(ret));
 		return -ret;
 	}
 
-	RC_LOG_INFO("start_worker: started");
+	fs_test_info("start_worker: started\n");
 	return 0;
 }
 
@@ -356,7 +352,7 @@ int read_cache_start_worker(void)
 void read_cache_stop_worker(void)
 {
 	if (!read_cache_worker_running) {
-		RC_LOG_INFO("stop_worker: not running");
+		fs_test_info("stop_worker: not running\n");
 		return;
 	}
 
@@ -367,7 +363,7 @@ void read_cache_stop_worker(void)
 
 	pthread_join(read_cache_worker, NULL);
 	read_cache_worker_running = false;
-	RC_LOG_INFO("stop_worker: stopped");
+	fs_test_info("stop_worker: stopped\n");
 
 	packed_zone_free(&read_cache_packed_zone);
 	read_cache_queue_clear();
@@ -382,35 +378,35 @@ int read_cache_enqueue_file(const char *path, int fd)
 	int dup_fd;
 
 	if (!path) {
-		RC_LOG_ERR("enqueue_file: path is NULL");
+		fs_err("enqueue_file: path is NULL\n");
 		return -EINVAL;
 	}
 	if (fd < 0) {
-		RC_LOG_ERR("enqueue_file: invalid fd");
+		fs_err("enqueue_file: invalid fd\n");
 		return -EINVAL;
 	}
 	if (!read_cache_worker_running) {
-		RC_LOG_ERR("enqueue_file: worker not running");
+		fs_err("enqueue_file: worker not running\n");
 		return -ENODEV;
 	}
 
 	dup_fd = dup(fd);
 	if (dup_fd < 0) {
-		RC_LOG_ERR("enqueue_file: dup failed: %s",
+		fs_err("enqueue_file: dup failed: %s\n",
 			rc_strerror(errno));
 		return -errno;
 	}
 
 	path_copy = strdup(path);
 	if (!path_copy) {
-		RC_LOG_ERR("enqueue_file: strdup failed");
+		fs_err("enqueue_file: strdup failed\n");
 		close(dup_fd);
 		return -ENOMEM;
 	}
 
 	item = calloc(1, sizeof(*item));
 	if (!item) {
-		RC_LOG_ERR("enqueue_file: alloc failed");
+		fs_err("enqueue_file: alloc failed\n");
 		free(path_copy);
 		close(dup_fd);
 		return -ENOMEM;
@@ -424,7 +420,7 @@ int read_cache_enqueue_file(const char *path, int fd)
 	read_cache_queue_push(item);
 	pthread_cond_signal(&read_cache_queue_cond);
 	pthread_mutex_unlock(&read_cache_queue_lock);
-	RC_LOG_INFO("enqueue_file: queued path=%s", path);
+	fs_test_info("enqueue_file: queued path=%s\n", path);
 
 	return 0;
 }
@@ -473,33 +469,33 @@ int packed_zone_add_file_from_fd(struct packed_zone *pz, const char *path, int f
 	int ret;
 
 	if (!pz || !path) {
-		RC_LOG_ERR("add_file: invalid args");
+		fs_err("add_file: invalid args\n");
 		return -EINVAL;
 	}
 	packed_zone_init_if_needed(pz);
 	if (fd < 0) {
-		RC_LOG_ERR("add_file: invalid fd");
+		fs_err("add_file: invalid fd\n");
 		return -EINVAL;
 	}
 	if (fstat(fd, &st)) {
-		RC_LOG_ERR("add_file: fstat failed: %s",
+		fs_err("add_file: fstat failed: %s\n",
 			rc_strerror(errno));
 		return -errno;
 	}
 	if (!S_ISREG(st.st_mode)) {
-		RC_LOG_ERR("add_file: not a regular file");
+		fs_err("add_file: not a regular file\n");
 		return -EINVAL;
 	}
 	if (st.st_size < 0) {
-		RC_LOG_ERR("add_file: negative size");
+		fs_err("add_file: negative size\n");
 		return -EINVAL;
 	}
 	if ((uint64_t)st.st_size > (uint64_t)LLONG_MAX) {
-		RC_LOG_ERR("add_file: size exceeds LLONG_MAX");
+		fs_err("add_file: size exceeds LLONG_MAX\n");
 		return -EFBIG;
 	}
 	if ((uint64_t)st.st_size > (uint64_t)SIZE_MAX) {
-		RC_LOG_ERR("add_file: size exceeds SIZE_MAX");
+		fs_err("add_file: size exceeds SIZE_MAX\n");
 		return -EFBIG;
 	}
 
@@ -520,13 +516,13 @@ int packed_zone_add_file_from_fd(struct packed_zone *pz, const char *path, int f
 			if (read_bytes < 0) {
 				if (errno == EINTR)
 					continue;
-				RC_LOG_ERR("add_file: read failed: %s",
+				fs_err("add_file: read failed: %s\n",
 					rc_strerror(errno));
 				ret = -errno;
 				goto out_free;
 			}
 			if (read_bytes == 0) {
-				RC_LOG_ERR("add_file: unexpected EOF");
+				fs_err("add_file: unexpected EOF\n");
 				ret = -EIO;
 				goto out_free;
 			}
@@ -538,14 +534,14 @@ int packed_zone_add_file_from_fd(struct packed_zone *pz, const char *path, int f
 
 	path_copy = strdup(path);
 	if (!path_copy) {
-		RC_LOG_ERR("add_file: strdup failed");
+		fs_err("add_file: strdup failed\n");
 		ret = -ENOMEM;
 		goto out_free;
 	}
 
 	file = calloc(1, sizeof(*file));
 	if (!file) {
-		RC_LOG_ERR("add_file: alloc failed");
+		fs_err("add_file: alloc failed\n");
 		free(path_copy);
 		ret = -ENOMEM;
 		goto out_free;
@@ -772,7 +768,7 @@ static void read_cache_pad_cur_zone(const char *read_id_dir)
 
 	info.curseg_type = READ_CACHE_CURSEG_WARM_DATA;
 	if (ioctl(read_cache_fs_fd, F2FS_IOC_GET_CURSEC_FREE_BLOCKS, &info)) {
-		RC_LOG_ERR("pad_cur_zone: get_cursec_free_blocks failed: %s",
+		fs_err("pad_cur_zone: get_cursec_free_blocks failed: %s\n",
 			rc_strerror(errno));
 		return;
 	}
@@ -785,7 +781,7 @@ static void read_cache_pad_cur_zone(const char *read_id_dir)
 	    >= (int)sizeof(pad_path))
 		return;
 
-	RC_LOG_INFO("pad_cur_zone: pad_bytes=%zu", pad_bytes);
+	fs_test_info("pad_cur_zone: pad_bytes=%zu\n", pad_bytes);
 	read_cache_write_zeros(pad_path, pad_bytes);
 }
 
@@ -803,7 +799,7 @@ int packed_zone_flush(struct packed_zone *pz, char *out_dir, size_t out_len)
 	int ret;
 
 	if (!pz) {
-		RC_LOG_ERR("flush: pz is NULL");
+		fs_err("flush: pz is NULL\n");
 		return -EINVAL;
 	}
 
@@ -817,7 +813,7 @@ int packed_zone_flush(struct packed_zone *pz, char *out_dir, size_t out_len)
 			return -ENOSPC;
 		if (ret < 0)
 			return ret;
-		RC_LOG_INFO("flush: evict read_id=%u", evict_id);
+		fs_test_info("flush: evict read_id=%u\n", evict_id);
 
 		/* 生成被驱逐 read_id 的目录名。 */
 		ret = read_cache_get_read_id_dir(evict_id, evict_dir, sizeof(evict_dir));
@@ -843,14 +839,14 @@ int packed_zone_flush(struct packed_zone *pz, char *out_dir, size_t out_len)
 	ret = read_cache_join_root(read_id_name, read_id_dir, sizeof(read_id_dir));
 	if (ret)
 		return ret;
-	RC_LOG_INFO("flush: allocated read_id=%u", read_id);
+	fs_test_info("flush: allocated read_id=%u\n", read_id);
 
 	/* 清理该 read_id 旧数据。 */
 	read_cache_unlink_read_id_dir(read_id_dir);
 	/* 创建 read_id 顶层目录。 */
 	ret = read_cache_mkdir_p(read_id_dir, 0755);
 	if (ret) {
-		RC_LOG_ERR("flush: mkdir_p failed: %s", rc_strerror(ret));
+		fs_err("flush: mkdir_p failed: %s\n", rc_strerror(ret));
 		return ret;
 	}
 
@@ -876,7 +872,7 @@ int packed_zone_flush(struct packed_zone *pz, char *out_dir, size_t out_len)
 		/* 写入文件内容到f2fs */
 		ret = read_cache_write_file(file_path, file->data, file->size);
 		if (ret) {
-			RC_LOG_ERR("flush: write failed: %s",
+			fs_err("flush: write failed: %s\n",
 				rc_strerror(ret));
 			goto out_release;
 		}
@@ -944,19 +940,19 @@ int read_cache_query(const char *file_path)
 	int fd;
 
 	if (!file_path) {
-		RC_LOG_ERR("query: file_path is NULL");
+		fs_err("query: file_path is NULL\n");
 		return -EINVAL;
 	}
 
 	/* 通过布隆过滤器查询候选 read_id。 */
 	ret = bloom_filter_query(file_path, &candidates);
 	if (ret < 0) {
-		RC_LOG_ERR("query: bloom_filter_query failed: %s",
+		fs_err("query: bloom_filter_query failed: %s\n",
 			rc_strerror(ret));
 		return ret;
 	}
 	if (ret == 0) {
-		RC_LOG_INFO("query: miss path=%s", file_path);
+		fs_test_info("query: miss path=%s\n", file_path);
 		return -ENOENT;
 	}
 
@@ -972,13 +968,13 @@ int read_cache_query(const char *file_path)
 		if (fd >= 0) {
 			/* 命中后释放候选列表并返回 fd。 */
 			bloom_filter_free_list(&candidates);
-			RC_LOG_INFO("query: hit path=%s", file_path);
+			fs_test_info("query: hit path=%s\n", file_path);
 			return fd;
 		}
 	}
 
 	/* 遍历结束后释放候选列表。 */
 	bloom_filter_free_list(&candidates);
-	RC_LOG_INFO("query: miss path=%s", file_path);
+	fs_test_info("query: miss path=%s\n", file_path);
 	return -ENOENT;
 }
