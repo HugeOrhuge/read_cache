@@ -757,6 +757,7 @@ out:
 static void read_cache_pad_cur_zone(const char *read_id_dir)
 {
 	struct f2fs_cursec_free_info info = { 0 };
+	struct f2fs_cursec_free_info cold_info = { 0 };
 	char pad_path[PATH_MAX];
 	size_t pad_bytes;
 
@@ -766,11 +767,20 @@ static void read_cache_pad_cur_zone(const char *read_id_dir)
 		return;
 
 	info.curseg_type = READ_CACHE_CURSEG_WARM_DATA;
+	cold_info.curseg_type = READ_CACHE_CURSEG_COLD_DATA;
 	if (ioctl(read_cache_fs_fd, F2FS_IOC_GET_CURSEC_FREE_BLOCKS, &info)) {
-		fs_err("pad_cur_zone: get_cursec_free_blocks failed: %s\n",
+		fs_err("pad_cur_zone: get_cursec_warm_free_blocks failed: %s\n",
 			rc_strerror(errno));
 		return;
 	}
+	if (ioctl(read_cache_fs_fd, F2FS_IOC_GET_CURSEC_FREE_BLOCKS, &cold_info)) {
+		fs_err("pad_cur_zone: get_cursec_cold_free_blocks failed: %s\n",
+			rc_strerror(errno));
+		return;
+	}
+	fs_test_info("cursec_free_blocks: warm=%llu cold=%llu\n",
+		(unsigned long long)info.free_blocks,
+		(unsigned long long)cold_info.free_blocks);
 
 	pad_bytes = (size_t)info.free_blocks * READ_CACHE_BLOCK_SIZE;
 	if (!pad_bytes)
@@ -780,7 +790,7 @@ static void read_cache_pad_cur_zone(const char *read_id_dir)
 	    >= (int)sizeof(pad_path))
 		return;
 
-	fs_test_info("pad_cur_zone: pad_bytes=%zu\n", pad_bytes);
+	fs_test_info("pad_cur_zone: pad_bytes=%zu, pad_path=%s\n", pad_bytes, pad_path);
 	read_cache_write_zeros(pad_path, pad_bytes);
 }
 
