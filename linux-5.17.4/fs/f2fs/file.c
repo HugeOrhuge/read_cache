@@ -3013,7 +3013,6 @@ static int f2fs_ioc_get_features(struct file *filp, unsigned long arg)
 	return put_user(sb_feature, (u32 __user *)arg);
 }
 
-#ifdef CONFIG_BLK_DEV_ZONED
 static int f2fs_ioc_get_free_zones(struct file *filp, unsigned long arg)
 {
 	struct f2fs_sb_info *sbi = F2FS_I_SB(file_inode(filp));
