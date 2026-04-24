@@ -3018,7 +3018,10 @@ static int f2fs_ioc_get_free_zones(struct file *filp, unsigned long arg)
 	struct f2fs_sb_info *sbi = F2FS_I_SB(file_inode(filp));
 	struct f2fs_free_zone_info info = { 0 };
 	struct free_segmap_info *free_i = FREE_I(sbi);
-	unsigned int total_zones = 0;
+	struct dirty_seglist_info *dirty_i = DIRTY_I(sbi);
+	struct f2fs_stream_zone_pool *pool = &SM_I(sbi)->spin_write_pool;
+	unsigned int total_zones;
+	unsigned int orig_total_zones;
 	unsigned int zone_capacity_blocks = 0;
 	unsigned int free_secs;
 	unsigned int free_zones_sit;
@@ -3029,10 +3032,10 @@ static int f2fs_ioc_get_free_zones(struct file *filp, unsigned long arg)
 	unsigned int prefree_zones;
 	unsigned int spin_free_secs = 0;
 	unsigned int spin_prefree_segs = 0;
+	unsigned int spin_used_zones = 0;
 	u64 free_blocks;
 	u64 reserved_blocks;
 	u64 prefree_blocks;
-	int ret;
 
 	if (!f2fs_sb_has_blkzoned(sbi))
 		return -EOPNOTSUPP;
@@ -3042,14 +3045,17 @@ static int f2fs_ioc_get_free_zones(struct file *filp, unsigned long arg)
 	if (!zone_capacity_blocks)
 		return -EINVAL;
 
+	orig_total_zones = MAIN_SECS(sbi) / sbi->secs_per_zone;
+	total_zones = orig_total_zones;
+
 	spin_lock(&free_i->segmap_lock);
 	free_secs = free_i->free_sections;
 	spin_unlock(&free_i->segmap_lock);
 
-	if (f2fs_sb_has_blkzoned(sbi) && SM_I(sbi)->spin_write_pool.zone_map &&
-			SM_I(sbi)->spin_write_pool.max_zones) {
-		struct f2fs_stream_zone_pool *pool = &SM_I(sbi)->spin_write_pool;
+	if (f2fs_sb_has_blkzoned(sbi) && pool->zone_map && pool->max_zones) {
 		unsigned int zoneno;
+
+		spin_used_zones = pool->used_zones;
 
 		spin_lock(&free_i->segmap_lock);
 		for (zoneno = 0; zoneno < pool->total_zones; zoneno++) {
@@ -3068,8 +3074,7 @@ static int f2fs_ioc_get_free_zones(struct file *filp, unsigned long arg)
 		}
 		spin_unlock(&free_i->segmap_lock);
 
-		if (DIRTY_I(sbi)->dirty_segmap[PRE]) {
-			struct dirty_seglist_info *dirty_i = DIRTY_I(sbi);
+		if (dirty_i->dirty_segmap[PRE]) {
 			unsigned long *prefree_map = dirty_i->dirty_segmap[PRE];
 			unsigned int segno;
 
@@ -3086,29 +3091,74 @@ static int f2fs_ioc_get_free_zones(struct file *filp, unsigned long arg)
 
 	reserved_secs = reserved_sections(sbi);
 	prefree_segs = prefree_segments(sbi);
+
 	if (free_secs > spin_free_secs)
 		free_secs -= spin_free_secs;
 	else
 		free_secs = 0;
+
 	if (prefree_segs > spin_prefree_segs)
 		prefree_segs -= spin_prefree_segs;
 	else
 		prefree_segs = 0;
+
+	if (total_zones > spin_used_zones)
+		total_zones -= spin_used_zones;
+	else
+		total_zones = 0;
+
 	free_blocks = (u64)free_secs * sbi->segs_per_sec * sbi->blocks_per_seg;
 	reserved_blocks = (u64)reserved_secs * sbi->segs_per_sec * sbi->blocks_per_seg;
+#if SEP_SSA
+	prefree_blocks = (u64)prefree_segs * (sbi->blocks_per_seg + 1);
+#else
 	prefree_blocks = (u64)prefree_segs * sbi->blocks_per_seg;
+#endif
 	free_zones_sit = free_blocks / zone_capacity_blocks;
 	reserved_zones = DIV_ROUND_UP(reserved_blocks, zone_capacity_blocks);
-	prefree_zones = prefree_blocks / zone_capacity_blocks;
+
+	/* 计算整个 zone 内所有 segment 都为 prefree 的 zone 数量（排除 spin_write_pool） */
+	prefree_zones = 0;
+	if (dirty_i->dirty_segmap[PRE]) {
+		unsigned long *prefree_map = dirty_i->dirty_segmap[PRE];
+		unsigned int segs_per_zone = sbi->secs_per_zone * sbi->segs_per_sec;
+		unsigned int zoneno;
+
+		mutex_lock(&dirty_i->seglist_lock);
+		for (zoneno = 0; zoneno < orig_total_zones; zoneno++) {
+			unsigned int zone_start_seg = zoneno * segs_per_zone;
+			unsigned int zone_end_seg = zone_start_seg + segs_per_zone;
+			unsigned int segno;
+			bool all_prefree = true;
+
+			if (pool->zone_map && zoneno < pool->total_zones &&
+			    test_bit(zoneno, pool->zone_map))
+				continue;
+
+			for (segno = zone_start_seg; segno < zone_end_seg; segno++) {
+				if (!test_bit(segno, prefree_map)) {
+					all_prefree = false;
+					break;
+				}
+			}
+			if (all_prefree)
+				prefree_zones++;
+		}
+		mutex_unlock(&dirty_i->seglist_lock);
+	}
+
+	free_zones = free_secs;
 	if (free_zones > reserved_zones)
 		free_zones -= reserved_zones;
 	else
 		free_zones = 0;
 
 	f2fs_info(sbi,
-		"get_free_zones: free=%u total=%u reserved=%u prefree=%u cap_blks=%u",
+		"get_free_zones: free=%u total=%u reserved=%u prefree=%u cap_blks=%u "
+		"spin_zones=%u spin_free_secs=%u spin_prefree_segs=%u",
 		free_zones, total_zones, reserved_zones,
-		prefree_zones, zone_capacity_blocks);
+		prefree_zones, zone_capacity_blocks,
+		spin_used_zones, spin_free_secs, spin_prefree_segs);
 
 	info.blocks_per_seg = sbi->blocks_per_seg;
 	info.segs_per_sec = sbi->segs_per_sec;
