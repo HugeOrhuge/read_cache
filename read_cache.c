@@ -202,7 +202,7 @@ int read_cache_check_space(const struct packed_zone *pz)
 	fs_test_info("free_zones=%u total_zones=%u reserved_zones=%u prefree_zones=%u\n",
 		info.free_zones, info.total_zones, info.reserved_zones, info.prefree_zones);
 
-	return (int)info.free_zones > SPINFS_WRITE_POOL_SIZE;
+	return (int)info.free_zones + (int)info.prefree_zones;
 }
 
 static void read_cache_queue_push(struct read_cache_queue_item *item)
@@ -805,7 +805,7 @@ int packed_zone_flush(struct packed_zone *pz, char *out_dir, size_t out_len)
 	packed_zone_init_if_needed(pz);
 
 	/* 写入前检查空间，不足则驱逐热度最小的 read_id。 */
-	while (read_cache_check_space(pz)) {
+	while (!read_cache_check_space(pz)) {
 		/* 取出热度最小的 read_id。 */
 		ret = hotness_get_min_read_id(&evict_id);
 		if (ret == -ENOENT)
