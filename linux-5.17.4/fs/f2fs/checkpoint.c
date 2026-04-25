@@ -216,6 +216,15 @@ bool f2fs_is_valid_blkaddr(struct f2fs_sb_info *sbi,
 				blkaddr < MAIN_BLKADDR(sbi))) {
 			f2fs_warn(sbi, "access invalid blkaddr:%u",
 				  blkaddr);
+			//【TODO251122】TOTAL_SEGS有误
+			printk("(%s:%d) access invalid blkaddr:%u, MAX_BLKADDR(sbi): %u, SEG0_BLKADDR(sbi): %u, TOTAL_BLKS(sbi): %u, TOTAL_SEGS(sbi): %u, (sbi)->log_blocks_per_seg: %u\n",
+				__func__, __LINE__, blkaddr, MAX_BLKADDR(sbi), SEG0_BLKADDR(sbi), TOTAL_BLKS(sbi), TOTAL_SEGS(sbi), (sbi)->log_blocks_per_seg);
+			// access invalid blkaddr:209340517, 
+			// MAX_BLKADDR(sbi): 209324032, 
+			// SEG0_BLKADDR(sbi): 1048576, 
+			// TOTAL_BLKS(sbi): 208275456, 
+			// TOTAL_SEGS(sbi): 406788, 【应该是407552】
+			// (sbi)->log_blocks_per_seg: 9
 			set_sbi_flag(sbi, SBI_NEED_FSCK);
 			WARN_ON(1);
 			return false;
@@ -2646,9 +2655,9 @@ inline pgoff_t next_log_addr(struct f2fs_sb_info *sbi, int log_type){
 		off_in_zone = SM_I(sbi)->sum_blks_in_log / stripe_cnt;
 		stripe_idx = SM_I(sbi)->sum_blks_in_log % stripe_cnt;
 
-		log_addr = SM_I(sbi)->sum_log_blkaddr + stripe_idx * sbi->blocks_per_blkz;
+		log_addr = SM_I(sbi)->ssa_log_blkaddr + stripe_idx * sbi->blocks_per_blkz;
 		log_addr += off_in_zone;
-//		log_addr = SM_I(sbi)->sum_log_blkaddr + SM_I(sbi)->sum_blks_in_log;
+//		log_addr = SM_I(sbi)->ssa_log_blkaddr + SM_I(sbi)->sum_blks_in_log;
 		SM_I(sbi)->sum_blks_in_log++;
 #if DELAYED_MERGE
 		log_addr = log_addr + SM_I(sbi)->cur_sum_log * stripe_cnt * sbi->blocks_per_blkz;
@@ -2678,7 +2687,7 @@ struct page *get_next_log_page(struct f2fs_sb_info *sbi, int log_type){
 		}
 
 	} else if (log_type == NAT_LOG) {
-		if (off >= SM_I(sbi)->sum_log_blkaddr){
+		if (off >= SM_I(sbi)->ssa_log_blkaddr){
 			f2fs_bug_on(sbi, 1);
 			return NULL;
 		}
@@ -2855,7 +2864,7 @@ int reset_meta_zone_towrite(struct f2fs_sb_info *sbi,
 			log = 1;
 			break;
 		case SSA_LOG:
-			base = SM_I(sbi)->sum_log_blkaddr;
+			base = SM_I(sbi)->ssa_log_blkaddr;
 			log = 1;
 			break;
 		case SIT:

@@ -1234,6 +1234,7 @@ int f2fs_get_f2fs_info(void)
 	 *     setting by the user.
 	 */
 	c.zoned_model = F2FS_ZONED_NONE;
+	// 如果c.devices[1].zoned_model=F2FS_ZONED_HA ==> c.zoned_model=F2FS_ZONED_HA
 	for (i = 0; i < c.ndevs; i++) {
 		switch (c.devices[i].zoned_model) {
 		case F2FS_ZONED_NONE:
@@ -1248,6 +1249,7 @@ int f2fs_get_f2fs_info(void)
 		}
 	}
 
+	// 将ZNS上的zone_blocks设置到configuration中
 	if (c.zoned_model != F2FS_ZONED_NONE) {
 
 		/*
@@ -1289,7 +1291,7 @@ int f2fs_get_f2fs_info(void)
 
 	MSG(0, "Info: Segments per section = %d\n", c.segs_per_sec);
 	MSG(0, "Info: Sections per zone = %d\n", c.secs_per_zone);
-	MSG(0, "Info: sector size = %u\n", c.sector_size);
+	MSG(0, "Info: sector size = %uB\n", c.sector_size);
 	MSG(0, "Info: total sectors = %"PRIu64" (%"PRIu64" MB)\n",
 				c.total_sectors, (c.total_sectors *
 					(c.sector_size >> 9)) >> 11);

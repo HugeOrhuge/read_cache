@@ -1096,7 +1096,7 @@ struct f2fs_sm_info {
 	int cur_sit_log;			/* sit log set number of latest version  */
 
 	/* for SSA */
-	block_t sum_log_blkaddr;	/*start block address of SSA log area */
+	block_t ssa_log_blkaddr;	/*start block address of SSA log area */
 	int sum_blks_in_log; 		/* numbers of sum blocks written in current log zone */
 	int cur_sum_log; 			/* sum log set number of latest version */
 
@@ -2784,6 +2784,8 @@ static inline void f2fs_put_page(struct page *page, int unlock)
 		f2fs_bug_on(F2FS_P_SB(page), !PageLocked(page));
 		unlock_page(page);
 	}
+	// 释放对该页面的引用计数
+	// 当引用计数降为零时，页面可以被回收
 	put_page(page);
 }
 
@@ -4715,8 +4717,13 @@ static inline bool has_curlog_space(struct f2fs_sb_info *sbi,
 		return true;
 	}
 	// consider all zone size is equal
-	log_size = log_size(sbi);
-	log_size = min(log_size, meta_blks_zone_cap(sbi));
+	// 【TODO251121】这里计算delta log区域的大小有误
+	// log_size(sbi) = (sbi->segs_per_sec * sbi->blocks_per_seg)
+	// sbi->segs_per_sec = (sbi->segs_per_sec * sbi->blocks_per_seg) / (sbi->blocks_per_seg + 1);
+    // sbi->blocks_per_seg = 1 << sbi->log_blocks_per_seg;               
+	// log_size = log_size(sbi);
+	// log_size = min(log_size, meta_blks_zone_cap(sbi));
+	log_size = meta_blks_zone_cap(sbi);
 #if META_LOG_STRIPE
   if (type == SSA_LOG) {
     log_size *= META_STRIPE_CNT;
@@ -4726,6 +4733,7 @@ static inline bool has_curlog_space(struct f2fs_sb_info *sbi,
 	//printk("(%s : %d) used blocks : %d, need : %d",
 	//		__func__, __LINE__, used_blocks, blocks_needed);
 
+	// 判断delta log区域是否可以放下cache中的log blocks
 	if(log_size >= (used_blocks + blocks_needed))
 		return true;
 	

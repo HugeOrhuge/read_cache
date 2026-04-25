@@ -155,12 +155,12 @@ EXPORT_SYMBOL_GPL(blkdev_nr_zones);
 int blkdev_report_zones(struct block_device *bdev, sector_t sector,
 			unsigned int nr_zones, report_zones_cb cb, void *data)
 {
-	pr_info("[blkdev_report_zones: ttt111\n]");
+	// pr_info("[blkdev_report_zones: ttt111]\n");
 	struct gendisk *disk = bdev->bd_disk;
-	pr_info("[blkdev_report_zones: ttt222\n]");
+	// pr_info("[blkdev_report_zones: ttt222]\n");
 	sector_t capacity = get_capacity(disk);
 
-	/* Ìí¼Óµ÷ÊÔÐÅÏ¢£º¼ì²é»ù±¾²ÎÊý */
+	/* ï¿½ï¿½ï¿½Óµï¿½ï¿½ï¿½ï¿½ï¿½Ï¢ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ */
 	pr_info("blkdev_report_zones: bdev=%px, sector=%llu, nr_zones=%u, cb=%px, data=%px\n",
 		 bdev, (unsigned long long)sector, nr_zones, cb, data);
 	pr_info("  disk=%px, disk_name=%s, capacity=%llu\n",
@@ -184,7 +184,7 @@ int blkdev_report_zones(struct block_device *bdev, sector_t sector,
 		return 0;
 	}
 
-	/* Ìí¼Óµ÷ÊÔÐÅÏ¢£º¼ì²é report_zones º¯ÊýÖ¸Õë */
+	/* ï¿½ï¿½ï¿½Óµï¿½ï¿½ï¿½ï¿½ï¿½Ï¢ï¿½ï¿½ï¿½ï¿½ï¿½ report_zones ï¿½ï¿½ï¿½ï¿½Ö¸ï¿½ï¿½ */
 	pr_info("  Calling disk->fops->report_zones (%px)\n", disk->fops->report_zones);
 
 	int ret = disk->fops->report_zones(disk, sector, nr_zones, cb, data);

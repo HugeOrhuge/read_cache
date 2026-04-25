@@ -308,6 +308,8 @@ static int f2fs_prepare_super_block(void)
 	// For superblock, we use 2z [=> 2 zones for superblock]
 	zone_align_start_offset *= 2;
 #else
+	//【TODO1125】这里有一点奇怪，为什么SSD的segment0_blkaddr也需要跟zone size对齐呢？
+	//【TODO1125】是对的，c.devices[0]是ZNS device
 	if (c.zoned_mode && c.ndevs > 1)
 		zone_align_start_offset +=
 			(c.devices[0].total_sectors * c.sector_size) % zone_size_bytes;
@@ -362,7 +364,7 @@ static int f2fs_prepare_super_block(void)
 		}
 		if (c.ndevs > 1) {
 		// if (c.ndevs > 0) {
-			//【TODO】为什么只有ndevs>1时memcpy?
+			//【TODO】为什么只有ndevs>1时memcpy?【蠢的】
 			memcpy(sb->devs[i].path, c.devices[i].path, MAX_PATH_LEN);
 			sb->devs[i].total_segments =
 					cpu_to_le32(c.devices[i].total_segments);
@@ -584,8 +586,8 @@ static int f2fs_prepare_super_block(void)
 		get_sb(segment_count_sit) +
 		get_sb(segment_count_nat) +
 		get_sb(segment_count_ssa); 
-	MSG(1, "(%s:%d)segment_count_ckpt : %u, segment_count_sit : %u, segment_count_nat : %u, segment_count_ssa : %u,\n", 
-		__func__, __LINE__, get_sb(segment_count_ckpt), get_sb(segment_count_sit), get_sb(segment_count_nat), get_sb(segment_count_ssa));
+	MSG(1, "(%s:%d)segment_count_ckpt : %u, segment_count_sit : %u, segment_count_nat : %u, segment_count_ssa : %u, segment_count : %u\n", 
+		__func__, __LINE__, get_sb(segment_count_ckpt), get_sb(segment_count_sit), get_sb(segment_count_nat), get_sb(segment_count_ssa), get_sb(segment_count));
 #if GRID_STRIPE
   total_meta_segments += 6 * blkz_size_segs; // 6 zones for log?
 #else
