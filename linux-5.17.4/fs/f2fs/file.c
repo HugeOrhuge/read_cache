@@ -3080,7 +3080,7 @@ static int f2fs_ioc_get_free_zones(struct file *filp, unsigned long arg)
 	free_zones_sit = free_blocks / zone_capacity_blocks;
 	reserved_zones = DIV_ROUND_UP(reserved_blocks, zone_capacity_blocks);
 	prefree_zones = prefree_blocks / zone_capacity_blocks;
-	free_zones = min(free_zones_sit, empty_zones);
+	free_zones = free_secs;
 	if (free_zones > reserved_zones)
 		free_zones -= reserved_zones;
 	else
