@@ -2028,6 +2028,27 @@ static int f2fs_ioc_get_stream_id(struct file *filp, unsigned long arg)
 	return put_user((u32)id, (u32 __user *)arg);
 }
 
+static int f2fs_ioc_reclaim_prefree(struct file *filp)
+{
+	struct f2fs_sb_info *sbi = F2FS_I_SB(file_inode(filp));
+	struct cp_control cpc = { .reason = CP_SYNC, };
+	unsigned int prefree_segs;
+	int ret;
+
+	prefree_segs = prefree_segments(sbi);
+	if (!prefree_segs)
+		return 0;
+	if (is_sbi_flag_set(sbi, SBI_CP_DISABLED))
+		return -EINVAL;
+
+	f2fs_info(sbi, "reclaim_prefree: trigger checkpoint for %u prefree segs",
+		  prefree_segs);
+	ret = f2fs_write_checkpoint(sbi, &cpc);
+	if (ret)
+		f2fs_err(sbi, "reclaim_prefree: checkpoint failed, ret=%d", ret);
+	return ret;
+}
+
 static int f2fs_ioc_start_atomic_write(struct file *filp)
 {
 	struct inode *inode = file_inode(filp);
@@ -3170,6 +3191,7 @@ static int f2fs_ioc_get_free_zones(struct file *filp, unsigned long arg)
 	info.prefree_zones = prefree_zones;
 	info.free_zones = free_zones;
 	info.total_zones = total_zones;
+	info.prefree_segs = prefree_segments(sbi);
 	info.free_sections = free_secs;
 
 	if (copy_to_user((struct f2fs_free_zone_info __user *)arg, &info,
@@ -4482,6 +4504,8 @@ static long __f2fs_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		return f2fs_ioc_set_stream_id(filp, arg);
 	case F2FS_IOC_GET_STREAM_ID:
 		return f2fs_ioc_get_stream_id(filp, arg);
+	case F2FS_IOC_RECLAIM_PREFREE:
+		return f2fs_ioc_reclaim_prefree(filp);
 	default:
 		return -ENOTTY;
 	}

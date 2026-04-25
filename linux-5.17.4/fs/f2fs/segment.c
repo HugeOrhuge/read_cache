@@ -2083,7 +2083,7 @@ void f2fs_release_discard_addrs(struct f2fs_sb_info *sbi)
 /*
  * Should call f2fs_clear_prefree_segments after checkpoint is done.
  */
-static void set_prefree_as_free_segments(struct f2fs_sb_info *sbi)
+void set_prefree_as_free_segments(struct f2fs_sb_info *sbi)
 {
 	struct dirty_seglist_info *dirty_i = DIRTY_I(sbi);
 	unsigned int segno;

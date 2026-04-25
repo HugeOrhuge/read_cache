@@ -48,6 +48,7 @@
 #define F2FS_IOC_GET_STREAM_ID		_IOR(F2FS_IOCTL_MAGIC, 27, __u32)
 #define F2FS_IOC_GET_CURSEC_FREE_BLOCKS	_IOWR(F2FS_IOCTL_MAGIC, 28,	\
 					struct f2fs_cursec_free_info)
+#define F2FS_IOC_RECLAIM_PREFREE	_IO(F2FS_IOCTL_MAGIC, 29)
 
 /*
  * should be same as XFS_IOC_GOINGDOWN.
@@ -114,6 +115,7 @@ struct f2fs_free_zone_info {
 	__u32 prefree_zones;
 	__u32 free_zones;
 	__u32 total_zones;
+	__u32 prefree_segs;		/* 所有 prefree segments 的数量 */
 	__u64 free_sections;
 };
 

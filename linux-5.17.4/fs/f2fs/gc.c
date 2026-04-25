@@ -31,6 +31,9 @@
 
 static struct kmem_cache *victim_entry_slab;
 
+/* prefree segments 超过 1GB 时直接回收 */
+#define PREFREE_GC_THRESHOLD_BYTES	(1ULL << 30)
+
 static unsigned int count_bits(const unsigned long *addr,
 				unsigned int offset, unsigned int len);
 
@@ -2033,6 +2036,23 @@ gc_more:
 	if (unlikely(f2fs_cp_error(sbi))) {
 		ret = -EIO;
 		goto stop;
+	}
+
+	/* 若 prefree segments 累计超过 1GB，通过 checkpoint 回收 */
+	if (prefree_segments(sbi) &&
+			!is_sbi_flag_set(sbi, SBI_CP_DISABLED)) {
+		unsigned int prefree_segs = prefree_segments(sbi);
+		u64 prefree_bytes = (u64)prefree_segs *
+				sbi->blocks_per_seg * F2FS_BLKSIZE;
+
+		if (prefree_bytes > PREFREE_GC_THRESHOLD_BYTES) {
+			f2fs_info(sbi,
+				"gc: prefree exceeded 1GB (%llu bytes, %u segs), trigger checkpoint",
+				prefree_bytes, prefree_segs);
+			ret = f2fs_write_checkpoint(sbi, &cpc);
+			if (ret)
+				goto stop;
+		}
 	}
 
 	if (gc_type == BG_GC && has_not_enough_free_secs(sbi, 0, 0)) {
